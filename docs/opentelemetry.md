@@ -254,11 +254,28 @@ routr sees only the instructions it hands them. A pane or terminal `launch` whos
 (`prompted`), and a terminal `send` whose message the worker took (`delivered`), record a
 CLIENT child `invoke_agent {gen_ai.agent.name}`. It starts when routr hands the instruction over (submits a pane's
 prompt, opens a terminal with its task, or sends a terminal its message) and ends when the command has its answer.
-It carries the worker's repository, branch, cwd and worktree, so a receiver can join it to that harness's session
-by repository, branch and time. A lead follows a pane worker through herdr itself, so routr never sees those later
-instructions. At launch end, routr reads herdr's `agent_session` once; a validated non-null `id` becomes that
-child's `gen_ai.conversation.id`. The hook can lag or report null; routr never waits for an id. A terminal worker's
-conversation is never known. Cleanup reads no conversation; it links to the launch.
+It carries the worker's repository, branch, cwd and worktree. A lead follows a pane worker through herdr itself, so
+routr never sees those later instructions. Cleanup reads no conversation; it links to the launch.
+
+Every `invoke_agent` span carries the worker's own session id as `gen_ai.conversation.id`, or omits it and says why
+in `routr.conversation.missing`. The id is only ever one routr can prove belongs to that worker, never one matched by
+time, folder or branch:
+
+- Claude Code (pane and terminal): routr gives it a new UUIDv4 with `--session-id` before it starts.
+- Cursor (terminal): the worker's runner asks `cursor-agent create-chat` for a chat in the worker's own environment and
+  folder, and starts it with `--resume <id>`.
+- Codex and Antigravity (terminal): a terminal worker's first message points at its prompt file, named for that
+  launch's own worker record, so no other worker's first message is the same. routr finds the one session whose
+  record holds exactly that message and started after the worker's runner (two such sessions name neither):
+  Codex's rollout (its `session_meta` id) and Antigravity's conversation transcript (the conversation id it is filed under).
+- Codex, Cursor and Antigravity (pane): herdr's `agent_session` from the harness's hook, of kind `id`.
+- Headless: the id the harness names in its own stream, as before.
+- Kiro in a pane or terminal: none (`no_source`).
+
+An id the harness has not written yet when launch ends is waited for, up to 20 seconds, but only by a launch that
+exports a span; after that the span says `not_found`. A terminal `send` looks again, so its child carries an id
+written since. routr keeps the id the worker started with: when the harness moves to a new session under a running
+worker (Claude Code's `/clear`, Codex's `/new`), later spans still name the first one. routr cannot see that move.
 
 Command spans of `dispatch`, `subagent`, `launch` and `send` carry the lead's id as `gen_ai.conversation.id`: the
 command runs in the lead's conversation. A worker's own conversation is only ever on an `invoke_agent` span below
@@ -290,8 +307,8 @@ protocol; it is not an upstream measurement of local IPC.
 | `routr usage` | INTERNAL | inherited or new root | level only when explicitly given; per-subscription reading children |
 | `routr usage {subscription}` | INTERNAL | reading command | subscription, usage state and source; final error type |
 | `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead's `gen_ai.conversation.id`, forwarded carrier names; `invoke_agent` child when a pane or terminal worker took its task |
-| `invoke_agent {gen_ai.agent.name}` (pane, terminal) | CLIENT | `routr launch`, or terminal `routr send` | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree` of the worker; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, the pane's available `gen_ai.conversation.id`; `routr.kind`, `routr.backend`, `routr.launch.id`, `routr.model` and `routr.effort` as given (omitted for an agent a `--pane` rerun adopted, which kept its own) |
-| `invoke_agent {gen_ai.agent.name}` (headless) | CLIENT | saved `routr launch`; otherwise saved sampled parent, or a new root without a valid parent | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree`; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, available `gen_ai.conversation.id`; `routr.kind`, `routr.backend=headless`, available `routr.launch.id`, `routr.model`, `routr.effort`, `routr.turn`, `routr.turn.outcome`, `routr.turn.messages`; final `error.type`; classified observed `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`, `gen_ai.usage.reasoning.output_tokens` only (current adapters expose none). |
+| `invoke_agent {gen_ai.agent.name}` (pane, terminal) | CLIENT | `routr launch`, or terminal `routr send` | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree` of the worker; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, the worker's `gen_ai.conversation.id` or `routr.conversation.missing`; `routr.kind`, `routr.backend`, `routr.launch.id`, `routr.model` and `routr.effort` as given (omitted for an agent a `--pane` rerun adopted, which kept its own) |
+| `invoke_agent {gen_ai.agent.name}` (headless) | CLIENT | saved `routr launch`; otherwise saved sampled parent, or a new root without a valid parent | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree`; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, the session the harness named as `gen_ai.conversation.id`, or `routr.conversation.missing`; `routr.kind`, `routr.backend=headless`, available `routr.launch.id`, `routr.model`, `routr.effort`, `routr.turn`, `routr.turn.outcome`, `routr.turn.messages`; final `error.type`; classified observed `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`, `gen_ai.usage.reasoning.output_tokens` only (current adapters expose none). |
 | `routr send` | INTERNAL | inherited or new root; matched launch link | send state; lead's `gen_ai.conversation.id`; terminal `invoke_agent` child when the worker took the message |
 | `routr wait` | INTERNAL | inherited or new root; link per matched launch | wait state |
 | `routr workers` | INTERNAL | inherited or new root; link per matched launch | workers state |
@@ -366,7 +383,8 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.backend` | `string` | `pane`, `headless` or `terminal`. |
 | `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch: when the launch counts, the launch's `launch_id`, as its answer, its launch-history record and its `record --launch` carry it (a pane launch stopped at a question has this id in its trace and the launch index, with `launch_id` null and no history record). A recovery rerun has its own and links to the launch it finishes. |
 | `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
-| `gen_ai.conversation.id` | `string` | On commands, the lead's session id: measured environment source before explicit flag, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters. On a pane worker's `invoke_agent`, herdr agent_session of kind `id`, validated the same way; on headless turns, the harness UUID the adapter already reads. Omitted when unavailable. |
+| `gen_ai.conversation.id` | `string` | On commands, the lead's session id: measured environment source before explicit flag, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters. On a worker's `invoke_agent`, the worker's own session id (above), validated the same way. Omitted when unknown, with `routr.conversation.missing` on an `invoke_agent`. |
+| `routr.conversation.missing` | `string` | On an `invoke_agent` span without `gen_ai.conversation.id`: `no_source` (its harness keeps no id routr can prove is this worker's: Kiro in a pane or terminal), `not_assigned` (Cursor's `create-chat` gave none), `not_found` (the harness's record, herdr's report or a headless harness's stream had not named it). Unknown becomes `other`. |
 | `routr.model` | `string` | Worker model, 1–48 characters matching `[A-Za-z0-9][A-Za-z0-9.:[\]-]*`, without 17 consecutive alphanumerics; invalid becomes `other`. |
 | `routr.turn` | `int` | Headless turn number, starting at 1. |
 | `routr.turn.outcome` | `string` | `finished`, `failed`, `not_started`, `no_finish`, `stopped`; unknown becomes `other`. |

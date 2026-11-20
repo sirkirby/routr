@@ -467,7 +467,7 @@ Windows is not measured. What that means on your machine:
   `--worktree` the same git worktree and `--copy`. The record also holds `backend: "terminal"`, the terminal's address and
   name, and the config locations below.
 - **The prompt file.** The whole prompt (launch's opening, your task and rules, the closing line) is written to
-  `prompt.md` in the run folder, 0600 on macOS and Linux in a 0700 folder (on Windows it takes the access your home folder
+  `prompt-<id>.md` in the run folder (`<id>` the worker record's), 0600 on macOS and Linux in a 0700 folder (on Windows it takes the access your home folder
   gives), for the worker to read. It is never in a process's arguments: the first message says only where the file is.
   The terminal arguments hc keeps are `routr workers --run <run folder> --id <id>`. `cleanup --worker` removes the
   file with the run folder, and a stopped launch that removes its folder removes it. It stays there while the worker's
@@ -484,9 +484,16 @@ Windows is not measured. What that means on your machine:
 - **The runner.** The program in the terminal is routr's own, `routr workers --run <run folder> --id <id>`: launch passes the folder
   by its path, as the terminal's `HOME` is the core's and may not be your lead's. It checks the record's id there, starts
   the harness directly on that terminal, stays until it exits, passes on the hangup and terminate `hc kill` sends, writes
-  `run.json` beside the record (its own pid, the harness's, the times, the exit code or signal, nothing of its text),
-  and exits with its code. It starts one harness per worker, and refuses a second start. Status goes from the harness to
-  core directly.
+  `run.json` beside the record (its own pid, the harness's, the times, the exit code or signal, the record's id, the
+  session id it gave the harness, nothing of its text), and exits with its code. It starts one harness per worker, and
+  refuses a second start. Status goes from the harness to core directly.
+- **Its session id.** For Claude Code the runner makes a new id and passes it with `--session-id`. For Cursor it runs
+  `cursor-agent create-chat` once, in the worker's own folder and environment, which makes an empty chat in the worker's
+  private Cursor config folder, and passes its id with `--resume`. For Codex and Antigravity routr reads the harness's
+  own session files to find the one session holding the worker's first message (a Codex rollout's head, at most 2 MB of
+  each written since the runner started; Antigravity's transcripts' first lines), and keeps only that id, in
+  `session.json` in the run folder. Of what it reads there, only that session id is ever shown (`session`) or exported
+  (`gen_ai.conversation.id`); no message text is printed, logged or sent.
 - **Its environment.** The base is the terminal's own, which is the core server's, not your lead's, through the same
   filter as every harness start, so a lead's identity a core picked up from the shell it started in is removed. Then the
   terminal's own `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET` and `HC_SCOPE`, so the harness's `hc send` names it. Then only what

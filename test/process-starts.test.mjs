@@ -150,7 +150,7 @@ const ALLOWED = [
 // harnessEnv, or workerEnv for a worker's turn (harnessEnv with the checked trace-context carriers added back).
 const filtered = (call) => /env:(?:\{\.\.\.)?(?:harnessEnv|workerEnv|terminalEnv)\(/.test(call);
 // A filter taken away: the start then gets routr's own environment, whole.
-const unfiltered = (text) => text.replaceAll("harnessEnv()", "process.env").replaceAll("workerEnv(", "leakEnv(");
+const unfiltered = (text) => text.replace(/harnessEnv\((?:env)?\)/g, "process.env").replaceAll("workerEnv(", "leakEnv(");
 const allowed = (file, call) => ALLOWED.find((a) => a.file === file.replaceAll("\\", "/") && a.call === call);
 
 test("every process start filters the harness environment or names an exact non-harness exception", () => {

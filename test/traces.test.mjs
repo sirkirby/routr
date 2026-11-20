@@ -196,7 +196,11 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(task), mode: "dispatch", level: "standard" }));
   const answer = (o) => ({ code: 0, out: JSON.stringify(o) });
   let label = null;
-  const hc = async (cmd, a) => { if (a[0] === "run") label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length);
+  // Its runner, as it starts Claude Code: the id it gave it, recorded beside the record.
+  const given = "8d997247-4335-4a7b-8a2e-d883ab27799f";
+  const hc = async (cmd, a) => { if (a[0] === "run") { label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length);
+    const run = a[a.indexOf("--run") + 1];
+    writeFileSync(join(run, "run.json"), JSON.stringify({ pid: 1, started_at: new Date().toISOString(), id: a[a.indexOf("--id") + 1], harness_pid: 2, session: given })); }
     return cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
       : a[0] === "get" ? answer({ address: "t9", name: "traced", state: "live", labels: { "routr.worker": label }, status: { state: "done" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" })
       : a[0] === "send" ? answer({ turn: 2, started: true }) : answer({}); };
@@ -205,12 +209,13 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
   expect([r.state, r.worker.backend]).toEqual(["prompted", "terminal"]);
   const s = x.spans().find((v) => v.name === "routr launch"), a = attrs(s);
   expect(a).toMatchObject({ "routr.kind": "claude", "routr.backend": "terminal", "routr.launch.state": "prompted", "gen_ai.agent.name": "traced" });
-  // The task the worker took: a CLIENT child of the launch, with no conversation id (a terminal worker's is never known).
+  // The task the worker took: a CLIENT child of the launch, naming the session its runner started Claude Code under.
   const handed = x.spans().filter((v) => v.name === "invoke_agent traced");
   expect(handed).toHaveLength(1);
   expect(handed[0]).toMatchObject({ kind: 3, traceId: s.traceId, parentSpanId: s.spanId });
   expect(attrs(handed[0])).toMatchObject({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "anthropic", "gen_ai.agent.name": "traced", "routr.backend": "terminal", "routr.launch.id": a["routr.launch.id"], "routr.model": "sonnet" });
-  expect(attrs(handed[0])).not.toHaveProperty("gen_ai.conversation.id");
+  expect(attrs(handed[0])["gen_ai.conversation.id"]).toBe(given);
+  expect(attrs(handed[0])).not.toHaveProperty("routr.conversation.missing");
   expect(BigInt(handed[0].startTimeUnixNano) >= BigInt(s.startTimeUnixNano) && BigInt(handed[0].endTimeUnixNano) <= BigInt(s.endTimeUnixNano)).toBe(true);
   // A message it took: the send span carries the lead's conversation, and its child the delivery, linked to the launch.
   const lead = "12345678-1234-4123-8123-123456789abd";
@@ -219,7 +224,7 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
   expect(attrs(sent)).toMatchObject({ "gen_ai.conversation.id": lead, "routr.send.state": "delivered" });
   expect(sent.links).toEqual([{ traceId: s.traceId, spanId: s.spanId, attributes: [] }]);
   expect(child).toMatchObject({ kind: 3, traceId: sent.traceId, parentSpanId: sent.spanId });
-  expect(attrs(child)).toMatchObject({ "gen_ai.agent.name": "traced", "routr.backend": "terminal", "routr.launch.id": a["routr.launch.id"] });
+  expect(attrs(child)).toMatchObject({ "gen_ai.agent.name": "traced", "routr.backend": "terminal", "routr.launch.id": a["routr.launch.id"], "gen_ai.conversation.id": given });
   expect(JSON.stringify(x.spans())).not.toContain("BRIEF_MARKER");
   expect(JSON.stringify(x.spans())).not.toContain("MESSAGE_MARKER");
   const index = new LaunchIndex({ home: x.home }), entry = index.match({ advice_id: "abc12345" });
@@ -228,17 +233,87 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
   expect(index.entries()[0].finished_at).toEqual(expect.any(String));
 });
 
+// Advice for a task, as dispatch saves it: launch requires it.
+const adviceFor = (home, task) => { const f = join(home, `advice-${briefSha(task).slice(0, 8)}.json`); writeFileSync(f, JSON.stringify({ id: "abc12345", brief_sha: briefSha(task), mode: "dispatch", level: "standard" })); return f; };
+test("a traced terminal Codex launch waits for the session its own record files under the worker's first message; send names it; Kiro says why it has none", async () => {
+  const codexHome = scratch("codex-home"), x = exporting({ HC_TERMINAL_ID: "t3", CODEX_HOME: codexHome }), V7 = "01a1f952-b5ab-7fe0-89e1-f7887d45923e";
+  let label = null, looks = 0, ticks = 0, dir = null, id = null;
+  const answer = (o) => ({ code: 0, out: JSON.stringify(o) });
+  // Codex writes its rollout only once it has taken its first message: here, after launch's third look for it.
+  const rollout = () => {
+    const d = new Date(), day = join(codexHome, "sessions", String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0"));
+    mkdirSync(day, { recursive: true });
+    const text = `Your task is in ${join(dir, `prompt-${id}.md`)}. Read that whole file now and do what it says.`;
+    writeFileSync(join(day, "rollout-x.jsonl"), [{ type: "session_meta", payload: { id: V7, timestamp: d.toISOString() } },
+      { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } }].map((l) => JSON.stringify(l)).join("\n"));
+  };
+  const hc = async (cmd, a) => {
+    if (a[0] === "run") { label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length); dir = a[a.indexOf("--run") + 1]; id = a[a.indexOf("--id") + 1];
+      writeFileSync(join(dir, "run.json"), JSON.stringify({ pid: 1, started_at: new Date(Date.now() - 1000).toISOString(), id, harness_pid: 2 })); }
+    return cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
+      : a[0] === "get" ? answer({ address: "t9", name: "codexw", state: "live", labels: { "routr.worker": label }, status: { state: "working" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" })
+      : a[0] === "send" ? answer({ turn: 2, started: true }) : answer({}); };
+  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), hc, self: (a) => ["/bin/routr", ...a], models: async () => null, ready: async () => null,
+    now: () => ticks, sleep: async (ms) => { ticks += ms; if (++looks === 3) rollout(); } };
+  const r = await launch(["--subscription", "codex", "--name", "codexw", "--model", "m", "--task", "BRIEF_MARKER", "--advice", adviceFor(x.home, "BRIEF_MARKER")], opts);
+  expect([r.state, r.worker.session]).toEqual(["prompted", V7]);
+  const s = x.spans().find((v) => v.name === "routr launch"), handed = x.spans().find((v) => v.name === "invoke_agent codexw");
+  expect(handed.parentSpanId).toBe(s.spanId);
+  expect(attrs(handed)["gen_ai.conversation.id"]).toBe(V7);
+  expect((await sendCommand(["--name", "codexw", "--task", "MESSAGE_MARKER"], opts)).state).toBe("delivered");
+  expect(attrs(x.spans().filter((v) => v.name === "invoke_agent codexw").at(-1))["gen_ai.conversation.id"]).toBe(V7);
+  expect((await workersCommand(["--name", "codexw"], { ...opts, hc })).workers[0]).toMatchObject({ session: V7 });
+  expect((await cleanup(["--worker", "codexw"], { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), hc: async (cmd, a) => (a[0] === "get" && a[1] !== "t3" ? answer({ address: "t9", name: "codexw", state: "live", labels: { "routr.worker": label }, status: { state: "done" }, turn: 1 }) : hc(cmd, a)) })).state).toBe("removed");
+  // Kiro keeps no id routr can prove is its worker's: none is guessed, and launch does not wait for one.
+  looks = 0;
+  const k = await launch(["--subscription", "kiro", "--name", "kirow", "--model", "m", "--task", "BRIEF_MARKER", "--advice", adviceFor(x.home, "BRIEF_MARKER")], { ...opts, hc: async (cmd, a) => { const v = await hc(cmd, a); return a[0] === "get" && a[1] !== "t3" ? answer({ ...JSON.parse(v.out), name: "kirow" }) : v; } });
+  expect([k.state, k.worker.session, k.worker.session_missing]).toEqual(["prompted", null, "no_source"]);
+  expect(looks).toBe(0);
+  const kh = attrs(x.spans().find((v) => v.name === "invoke_agent kirow"));
+  expect(kh).not.toHaveProperty("gen_ai.conversation.id");
+  expect(kh["routr.conversation.missing"]).toBe("no_source");
+});
+
+test("a pane worker's id: herdr's report waited for when its hook lags, a bounded wait that says not_found, none for Kiro", async () => {
+  const run = (kind, reports) => {
+    let started = false, gets = 0;
+    return async (a) => {
+      const ok = (result) => ({ ok: true, data: { result } });
+      if (a[0] === "pane" && a[1] === "get") { const v = reports[Math.min(gets++, reports.length - 1)]; return ok({ pane: { pane_id: "w1:p2", terminal_id: "term-1", ...(v ? { agent_session: { kind: "id", value: v } } : {}) } }); }
+      if (a[1] === "split") return ok({ pane: { pane_id: "w1:p2" } });
+      if (a[1] === "read") return ok({ text: started ? "Welcome\n❯" : "user % " });
+      if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, cwd: process.cwd() }] } });
+      if (a[1] === "start") { started = true; return ok({}); }
+      if (a[0] === "agent" && a[1] === "get") return started ? ok({ agent: { agent: kind, agent_status: "idle", interactive_ready: true, cwd: process.cwd() } }) : { ok: false, data: { error: { code: "agent_not_found" } } };
+      if (a[0] === "pane" && a[1] === "list") return ok({ panes: [{ pane_id: "w1:p2", terminal_id: "term-1", agent_status: "idle" }] });
+      if (a[0] === "workspace") return ok({ workspaces: [] });
+      return ok({});
+    };
+  };
+  const V7 = "01a1f952-b5ab-7fe0-89e1-f7887d45923e";
+  for (const [kind, reports, want] of [["codex", [null, null, null, V7], { "gen_ai.conversation.id": V7 }], ["codex", [null], { "routr.conversation.missing": "not_found" }], ["kiro", [V7], { "routr.conversation.missing": "no_source" }]]) {
+    const x = exporting({ HERDR_ENV: "1" });
+    let ticks = 0;
+    const r = await launch(["--subscription", kind, "--name", "panew", "--model", "m", "--direction", "right", "--task", "BRIEF_MARKER", "--advice", adviceFor(x.home, "BRIEF_MARKER")],
+      { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), run: run(kind, reports), models: async () => ["m"], ready: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; } });
+    expect([kind, r.state]).toEqual([kind, "prompted"]);
+    const h = attrs(x.spans().find((v) => v.name === "invoke_agent panew"));
+    expect([kind, h]).toMatchObject([kind, want]);
+    if (want["routr.conversation.missing"]) expect(h).not.toHaveProperty("gen_ai.conversation.id");
+  }
+});
+
 test("a pane launch records identity, session and immutable index; cleanup and later record link to it", async () => {
   const x = exporting({ HERDR_ENV: "1", CODEX_THREAD_ID: "019a1aaa-1234-7123-8123-123456789abc" }), advice = join(x.home, "advice.json"), task = "BRIEF_MARKER";
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(task), mode: "dispatch", level: "standard" }));
-  let ticks = 0, started = false, busy = false;
+  let ticks = 0, started = false, busy = false, startedWith = null;
   const session = "12345678-1234-4123-8123-123456789abc", run = async (a) => {
     const ok = (result) => ({ ok: true, data: { result } });
     if (a[0] === "pane" && a[1] === "get") return ok({ pane: { pane_id: "w1:p2", terminal_id: "term-1", agent_session: { kind: "id", value: session } } });
     if (a[1] === "split") return ok({ pane: { pane_id: "w1:p2" } });
     if (a[1] === "read") return ok({ text: started ? "Welcome\n❯" : "user % " });
     if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, cwd: process.cwd() }] } });
-    if (a[1] === "start") { started = true; return ok({}); }
+    if (a[1] === "start") { started = true; startedWith = a; return ok({}); }
     if (a[0] === "agent" && a[1] === "get") return started ? ok({ agent: { agent: "claude", agent_status: busy ? "working" : "idle", interactive_ready: true, cwd: process.cwd() } }) : { ok: false, data: { error: { code: "agent_not_found" } } };
     if (a[0] === "pane" && a[1] === "list") return ok({ panes: [{ pane_id: "w1:p2", terminal_id: "term-1", agent_status: "idle" }] });
     if (a[0] === "workspace") return ok({ workspaces: [] });
@@ -255,10 +330,13 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   const s = x.spans().find((s) => s.name === "routr launch" && attrs(s)["routr.launch.state"] === "prompted"), a = attrs(s);
   expect(a).toMatchObject({ "routr.kind": "claude", "routr.backend": "pane", "routr.launch.state": "prompted", "gen_ai.agent.name": "fixture", "routr.model": "sonnet", "routr.advice.matched": true, "gen_ai.conversation.id": x.env.CODEX_THREAD_ID, "routr.cwd": "." });
   expect(a).not.toHaveProperty("gen_ai.request.model");
-  // The launch runs in the lead's conversation; the worker's, as herdr reports it, is on the task it took.
+  // The launch runs in the lead's conversation; the worker's is on the task it took: the id launch started Claude Code
+  // under, whatever herdr's hook says.
   const handed = x.spans().find((v) => v.name === "invoke_agent fixture" && v.parentSpanId === s.spanId);
   expect(handed).toMatchObject({ kind: 3, traceId: s.traceId });
-  expect(attrs(handed)).toMatchObject({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "anthropic", "gen_ai.agent.name": "fixture", "gen_ai.conversation.id": session,
+  const given = startedWith[startedWith.indexOf("--session-id") + 1];
+  expect(given).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  expect(attrs(handed)).toMatchObject({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "anthropic", "gen_ai.agent.name": "fixture", "gen_ai.conversation.id": given,
     "routr.backend": "pane", "routr.launch.id": a["routr.launch.id"], "routr.cwd": "." });
   // A dry run and a failed launch handed nothing over.
   expect(x.spans().filter((v) => v.name === "invoke_agent fixture")).toHaveLength(1);
@@ -277,7 +355,8 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect([r.launch_id, rerun.launch_id]).toEqual([a["routr.launch.id"], expect.any(String)]);
   expect(rerun.launch_id).not.toBe(r.launch_id);
   const rs = x.spans().filter((sp) => sp.name === "routr launch" && attrs(sp)["routr.launch.id"] === rerun.launch_id)[0];
-  // The rerun adopted the agent already in the pane, which kept its own model and effort: its task's span names neither.
+  // The rerun adopted the agent already in the pane, which kept its own session, model and effort: its task's span names
+  // herdr's report of its session, and neither model nor effort.
   const adopted = attrs(x.spans().find((v) => v.name === "invoke_agent fixture" && v.parentSpanId === rs.spanId));
   expect(adopted).toMatchObject({ "routr.backend": "pane", "routr.launch.id": rerun.launch_id, "gen_ai.conversation.id": session });
   expect(Object.keys(adopted).filter((k) => ["routr.model", "routr.effort"].includes(k))).toEqual([]);
@@ -705,7 +784,9 @@ test("turn projection uses shared shape checks, known error codes and only class
   const s = x.spans()[0];
   expect(s.status).toEqual({ code: 2 });
   expect(attrs(s)).toMatchObject({ "routr.model": "other", "routr.effort": "other", "routr.turn.outcome": "other", "error.type": "_OTHER", "gen_ai.usage.input_tokens": 20, "gen_ai.usage.output_tokens": 5, "gen_ai.usage.cache_read.input_tokens": 4, "gen_ai.usage.reasoning.output_tokens": 3 });
+  // Not a session id: none is named, and the span says the harness never named one.
   expect(attrs(s)).not.toHaveProperty("gen_ai.conversation.id");
+  expect(attrs(s)["routr.conversation.missing"]).toBe("not_found");
   expect(attrs(s)).not.toHaveProperty("gen_ai.usage.total_tokens");
   expect(attrs(s)).not.toHaveProperty("gen_ai.usage.cache_write.input_tokens");
   expect(JSON.stringify(x.batches())).not.toMatch(/PRIVATE|private model|secret effort/);

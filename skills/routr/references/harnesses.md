@@ -576,11 +576,38 @@ Measured 2026-10-25 against each harness's own record (Stage 2 probes):
 Each environment source is checked against its harness's format. When none matches, `--lead-session` can supply a
 known UUIDv4/UUIDv7 or a strict 16–64 character lowercase hex id; routr never invents one. Herdr's `agent_session`
 comes from harness hooks: Claude, Codex and Cursor at session start, Antigravity at first invocation, Kiro never.
-The value can lag or be null (Codex was null in the probe). Launch reads it once at its end and accepts only a
+The value can lag or be null (Codex was null in the probe). A traced pane launch waits up to 20 seconds for a
 format-checked non-null value of kind `id`, for the `invoke_agent` span of the task the worker took; cleanup reads
 none. A pane/terminal match establishes terminal continuity only: shell
 respawn can retain that terminal id and restore allocates a new one. It does not prove agent or conversation
 continuity.
+
+## A worker's own session id
+
+What routr names as a pane or terminal worker's session, only ever an id it can prove is that worker's. Measured
+2026-11-20 on macOS with one terminal worker each (Claude Code 2.1.329, codex-cli 0.169.0, cursor-agent 2026.11.19,
+agy 1.5.13), each id checked against the harness's own files:
+
+| Harness | How routr knows it | Checked against |
+|---|---|---|
+| Claude Code | routr gives it a new UUIDv4 with `--session-id` (pane and terminal) | its transcript `~/.claude/projects/<folder>/<id>.jsonl`, every line's `sessionId` |
+| Cursor | the terminal runner runs `cursor-agent create-chat` in the worker's folder and environment, then starts it with `--resume <id>` | the worker's private config folder held exactly that one chat (`chats/<hash>/<id>/`), with its conversation |
+| Codex | the rollout under `<CODEX_HOME>/sessions/YYYY/MM/DD/` whose user message is exactly the worker's first message, started after its runner: `session_meta.payload.id` | the rollout's file name and `session_meta` id |
+| Antigravity | the transcript `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` whose first line, the person's own input, is exactly the worker's first message | the folder name, also the name of its conversation database |
+| Kiro | none: its V3 sessions are `sess_<uuid>` in `--list-sessions`, which keeps no first message to match | |
+
+A terminal worker's first message names its prompt file, `prompt-<record id>.md`, so a match on its exact text is that
+launch and no other, even in a run folder a later worker of the same name reuses; two matches name neither.
+Codex wrote its rollout's user message about 3 seconds after launch ended; a traced launch waits up to 20 seconds.
+In a pane the first message is the whole wrapped task, so Codex, Cursor and Antigravity panes use herdr's
+`agent_session` (above).
+
+- `cursor-agent create-chat` prints its id within a second, then, in a config folder it has not run in (every
+  worker's private one), stays running for over a minute. Its first line is taken as its answer and it is stopped.
+- Antigravity's prompt history (`history.jsonl`) does not record a first message given with `-i`: it holds only
+  prompts typed in.
+- A harness can move a running worker to a new session (Claude Code's `/clear`, Codex's `/new`). routr keeps the id
+  the worker started with and cannot see the move.
 
 ## herdr's worktree folders (read from herdr 0.9.5's source, 2026-10-27)
 

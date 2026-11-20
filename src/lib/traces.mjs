@@ -21,6 +21,7 @@ import { LaunchIndex, launchContext } from "./launch-index.mjs";
 import { findableByRerun, newLaunchId, takesOver } from "./launch-identity.mjs";
 import { callHerdr, herdrId } from "./process-boundary.mjs";
 import { COMMANDS } from "./command-table.mjs";
+import { MISSING, sessionSource } from "./worker-session.mjs";
 
 const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000000n;
 // What the command table says a command's trace carries, and which decision-model reading its answer holds.
@@ -85,8 +86,25 @@ export function adviceForLaunch(id) { const c = context.getStore(); if (c?.comma
 async function paneFacts(pane, run) {
   try { const r = await callHerdr(run, ["pane", "get", pane], 1000); return r.ok ? r.data?.result?.pane : null; } catch { return null; }
 }
-// A pane's conversation, as herdr's agent_session hook last reported it: it can lag or be null, and routr never waits.
+// A pane's conversation, as herdr's agent_session hook last reported it: it can lag or be null.
 const paneConversation = (facts) => (facts?.agent_session?.kind === "id" ? sessionId(facts.agent_session.value) : null);
+// How long a traced launch waits for a worker's conversation id that its harness has not written yet: herdr's hook in a
+// pane, the harness's own record in a terminal (Codex wrote its first message 3 s after a launch's end, 2026-11-20).
+// Only a span needs it then, so an untraced launch never waits.
+export const SESSION_WAIT_MS = 20000;
+export const tracing = () => { try { return Boolean(context.getStore()?.span); } catch { return false; } };
+// A pane worker's id: the one launch gave it (Claude Code), or herdr's report of its harness's hook, looked for until it
+// comes. An agent a `--pane` rerun adopted kept its own session: only herdr can name it. Kiro has no hook.
+async function paneSession(r, run, { assigned, facts, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), now = () => Date.now() }) {
+  if (assigned) return { session: assigned };
+  if (!sessionSource(r.kind)) return { missing: "no_source" };
+  for (const until = now() + SESSION_WAIT_MS; ;) {
+    const id = paneConversation(facts);
+    if (id) return { session: id };
+    if (now() >= until) return { missing: "not_found" };
+    await sleep(250); facts = await paneFacts(r.pane, run);
+  }
+}
 // What a worker invocation says of its worker: a headless turn (workerTurn) and an instruction handed to a pane or
 // terminal worker (invocation) alike.
 const invoked = (w, backend, launchId) => ({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": HARNESSES[w.kind].otelProvider, "gen_ai.agent.name": w.name,
@@ -95,20 +113,21 @@ const invocable = (w) => Object.hasOwn(HARNESSES, w?.kind) && WORKER_NAME.test(w
 // An instruction routr hands a pane or terminal worker (its task at launch, a message at send) is the command's child
 // `invoke_agent {name}`, CLIENT as a headless turn is: it starts when routr hands the instruction over (handingOver) and
 // ends with the command's own work, recorded only when the worker took it. A headless worker's holder records its own
-// turns instead. The command span carries the lead's conversation; this child carries the worker's, only when known (a
-// pane's herdr agent_session; a terminal worker's is never known), and always the worker's repository and branch, which
-// a receiver can join to that harness's session.
+// turns instead. The command span carries the lead's conversation; this child carries the worker's (worker-session.mjs),
+// or `routr.conversation.missing` saying why it cannot, and always the worker's repository and branch.
 // Timed on the command's own clock (spanNow), so a wall-clock change mid-command cannot put the child outside it.
 export function handingOver() { try { const c = context.getStore(); if (c?.span) c.handover ??= { start: spanNow(c.span), now: () => spanNow(c.span) }; } catch {} }
-function invocation(c, w, { backend, launchId, identity, conversation = null }) {
+function invocation(c, w, { backend, launchId, identity, known }) {
   if (!c?.span || !c.handover || !invocable(w)) return;
   const span = started({ name: `invoke_agent ${w.name}`, kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, attributes: {} }, c.handover);
-  put(span, identity); put(span, { ...invoked(w, backend, launchId), "gen_ai.conversation.id": conversation });
+  const conversation = sessionId(known?.session);
+  put(span, identity); put(span, { ...invoked(w, backend, launchId), "gen_ai.conversation.id": conversation, "routr.conversation.missing": conversation ? null : pick(known?.missing ?? "not_found", MISSING) });
   span.endTimeUnixNano = spanNow(span); c.spans.push(span); c.handover = null;
 }
-// A message a terminal worker took (send): its worker record names its launch, folder, harness and model.
-export function delivered(w) {
-  try { const c = context.getStore(); if (c?.span && c.handover) invocation(c, w, { backend: w.backend, launchId: launchContext(w.launch)?.launch_id, identity: traceIdentity(w.cwd).attributes }); } catch {}
+// A message a terminal worker took (send): its worker record names its launch, folder, harness and model; `known` is
+// its conversation as send found it.
+export function delivered(w, known) {
+  try { const c = context.getStore(); if (c?.span && c.handover) invocation(c, w, { backend: w.backend, launchId: launchContext(w.launch)?.launch_id, identity: traceIdentity(w.cwd).attributes, known }); } catch {}
 }
 export async function cleanupLink(o, run) {
   try {
@@ -123,14 +142,19 @@ export async function cleanupLink(o, run) {
     }
   } catch {} // Index or pane observation failure never changes cleanup.
 }
-export async function completeLaunch(r, run, { rerun = false, backend, adopted = false } = {}) {
+// `assigned`: the id a pane launch gave its harness (paneSession); `sleep` and `now` are test seams for its wait.
+export async function completeLaunch(r, run, { rerun = false, backend, adopted = false, assigned = null, sleep, now } = {}) {
   const c = context.getStore(); if (!c?.span || c.command !== "launch") return;
   const identity = traceIdentity(r.cwd), facts = r.pane && r.state !== "planned" ? await paneFacts(r.pane, run) : null;
   put(c.span, identity.attributes);
-  // The task, as the worker took it. The id herdr reports goes on that child, never on the launch span: the launch runs
-  // in the lead's conversation. An adopted pane's agent kept its own model and effort, which launch cannot know (as its
-  // history record has it): the child names neither.
-  if (r.state === "prompted" && ["pane", "terminal"].includes(backend)) invocation(c, adopted ? { ...r, model: null, effort: null } : r, { backend, launchId: c.launchId, identity: identity.attributes, conversation: paneConversation(facts) });
+  // The task, as the worker took it. The worker's id goes on that child, never on the launch span: the launch runs in the
+  // lead's conversation. A terminal launch has already looked for it (its worker's `session`). An adopted pane's agent
+  // kept its own model and effort, which launch cannot know (as its history record has it): the child names neither.
+  if (r.state === "prompted" && ["pane", "terminal"].includes(backend)) {
+    const known = backend === "terminal" ? { session: r.worker?.session ?? null, missing: r.worker?.session_missing }
+      : await paneSession(r, run, { assigned: adopted ? null : assigned, facts, sleep, now });
+    invocation(c, adopted ? { ...r, model: null, effort: null } : r, { backend, launchId: c.launchId, identity: identity.attributes, known });
+  }
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
   // A recovery rerun is its own launch, with its own id (launch's, as its history record has it whether or not anything is
   // exported), linked to the launch it finishes. Whether it takes the pane over, and whether this launch is indexed,
@@ -281,8 +305,10 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
       if (ended) return; ended = true;
       try {
         if (!span) return;
+        // Its harness names its session in its own stream; a turn that ended before it did says so.
+        const id = typeof conversation === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(conversation) ? conversation : null;
         put(span, { "routr.turn.outcome": pick(outcome, ["finished", "failed", "not_started", "no_finish", "stopped"]), "routr.turn.messages": messages,
-          "gen_ai.conversation.id": typeof conversation === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(conversation) ? conversation : null });
+          "gen_ai.conversation.id": id, "routr.conversation.missing": id ? null : "not_found" });
         putUsage(span, usage);
         if (outcome !== "finished") error(span, outcome);
         span.endTimeUnixNano = spanNow(span);

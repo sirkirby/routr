@@ -391,3 +391,16 @@ test("run() with exitZero answers null for a command that printed and then exite
   expect(await run(process.execPath, ["-e", script], { timeoutMs: 15000 })).toBe('{"subtype":"success"}');
   expect(await run(process.execPath, ["-e", "process.stdout.write('ok')"], { timeoutMs: 15000, exitZero: true })).toBe("ok");
 });
+
+test("a harness answer is bounded: more output than maxBytes is no answer, and the first line can be the answer of one that stays running", async () => {
+  // Writes far past the cap and would keep running: no answer, in well under its timeout.
+  const flood = "const s = 'x'.repeat(65536); const go = () => process.stdout.write(s, go); go();";
+  const t = Date.now();
+  expect(await run(process.execPath, ["-e", flood], { timeoutMs: 15000, maxBytes: 4096 })).toBeNull();
+  expect(Date.now() - t).toBeLessThan(10000);
+  // Prints its answer and stays (Cursor's create-chat in a fresh config folder): taken at its first line.
+  const lingers = "process.stdout.write('8d997247-4335-4a7b-8a2e-d883ab27799f\\n'); setTimeout(() => {}, 60000);";
+  expect(await run(process.execPath, ["-e", lingers], { timeoutMs: 15000, maxBytes: 4096, until: (s) => s.includes("\n") })).toBe("8d997247-4335-4a7b-8a2e-d883ab27799f\n");
+  // Counted in bytes: 3000 two-byte characters are 6000 bytes, over a 4096 cap.
+  expect(await run(process.execPath, ["-e", "process.stdout.write('é'.repeat(3000))"], { timeoutMs: 15000, maxBytes: 4096 })).toBeNull();
+}, 20000);

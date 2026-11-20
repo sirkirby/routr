@@ -93,6 +93,12 @@ worker's reports.
 **Worker record**:
 What routr saved about a headless or terminal worker when it launched: its name, harness, model, backend and folder.
 
+**Worker session**:
+The session id a worker's harness keeps for it, which routr names as `session` and as the worker's
+`gen_ai.conversation.id`: only one routr can prove is that worker's, given to the harness at start or found in the
+harness's own record under the worker's first message. When routr has none, it says why (`session_missing`).
+_Avoid_: conversation (the OpenTelemetry attribute's word), lead session (the lead's own id)
+
 **Backend adapter**:
 What the worker commands (`workers`, `wait`, `send`, `stop`, `watch`, `cleanup --worker`) do to a worker for one
 backend: look at it, send to it, stop it, end it, or say it is followed elsewhere. Picked from the worker's record

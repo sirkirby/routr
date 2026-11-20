@@ -708,8 +708,9 @@ launch as before.
     kept, `worker.terminal` is null, and `next` adds `hc ls`.
 - `headline`: `routr: <name> (<kind>) took its task in terminal <t>`; `routr: <name> needs input in terminal <t>: <why>`;
   the failure as for a pane launch.
-- Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "terminal", run, terminal }` (`run`: the run
-  folder; `terminal`: its address). `steps`: `reserve`, `terminal`, `prompt` (Kiro: `model` first, when its list was read).
+- Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "terminal", run, terminal, session,
+  session_missing? }` (`run`: the run folder; `terminal`: its address; once it took its task, `session`: its harness's
+  session id, or null with `session_missing` saying why, as `workers` says them). `steps`: `reserve`, `terminal`, `prompt` (Kiro: `model` first, when its list was read).
 - `next`: `routr wait --name <name>` (run); `hc read <t> --lines 200` (run);
   `routr send --name <name> --task-file <file>` (a template); the record template; `routr cleanup --worker <name>`
   (run). A harness that reports no status gets, instead of the routr wait, a step saying it sends its report to the
@@ -903,7 +904,7 @@ For a worker in a herdr-core terminal whose harness reports status, routr asks `
 pending too. Any other status returns. Its `turn` is hc's turn counter and each newly counted turn has
 `outcome: "finished"`, `report: null` and `delivered: 0`. `next` for it is `hc read <t> --lines 200` (run): terminal
 text never enters output or a report file. Its wait row includes `backend: "terminal"` and the saved `terminal`
-address, beside the common worker fields. Status `error` is state `failed` and is a notice. A terminal at a question
+address, beside the common worker fields; its `session` and `session_missing` are as `workers` gives them. Status `error` is state `failed` and is a notice. A terminal at a question
 is state `needs_input`, a notice, with `why`: status `blocked` ("<harness> is waiting at a question."), or launch's
 rule for a question the harness reports nothing for: hc's `reported` is false, the runner's `run.json` records the
 harness started and not ended, and 20 seconds have passed since its `started_at` (the same sentence as launch's
@@ -1010,7 +1011,16 @@ Never worker text. Inside a sandbox it can see, `warnings` says so.
 
 A worker in a herdr-core terminal gets a row of its record and of where its terminal is, from `hc get` and its runner's
 `run.json` (the reading `cleanup --worker` acts on): `name`, `kind`, `model`, `effort`, `cwd`, `backend: "terminal"`,
-`terminal`, and `state`:
+`terminal`, `session`, `session_missing` when `session` is null, and `state`.
+
+`session` is the harness's own session id for this worker, only one routr can prove is its own: the id its runner
+gave it as it started (Claude Code's `--session-id`; Cursor's `create-chat`, then `--resume`), or the one its
+harness's record holds for its first message, which names its prompt file, named for this launch's record (Codex's
+rollout, Antigravity's conversation transcript); two sessions holding it name neither. A found id is kept in the run
+folder for that record. It stays the id the worker started with, even when the harness later moves to a new session (`/clear`).
+`session_missing` is a fixed code: `no_source` (Kiro keeps none routr can prove), `not_assigned` (Cursor's
+`create-chat` gave none), or `not_found` (the harness has not written it yet; routr looks again on each read). The
+states:
 
 - `in_terminal`: live and labelled with the record's id; `status` is its harness's status word, or null. `next` has its
   `hc` steps.
