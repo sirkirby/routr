@@ -264,8 +264,9 @@ test("OpenAI's Decisions API is asked in its own shape and its answers read as S
     kind: { type: "choice", instructions: "K", criteria: { docs: "prose", debug: "a fault" } },
   };
   const b = { type: "predicate", name: "b", probability: 0.1 };
-  const level = { type: "score", name: "level", score: 0.92, confidence: 0.75, probabilities: [{ value: 0, label: "0", probability: 0.08 }, { value: 1, label: "1", probability: 0.92 }, { value: 2, label: "2", probability: 0 }] };
-  const kind = { type: "choice", name: "kind", choice: "docs", confidence: 0.5, probabilities: [{ value: "docs", probability: 0.9 }, { value: "debug", probability: 0.1 }] };
+  // As a real reply (2026-11-20): `score` is the expected level, `confidence` TypeSafe's reading of the split.
+  const level = { type: "score", name: "level", score: 0.92, confidence: 0.88, probabilities: [{ value: 0, label: "0", probability: 0.08 }, { value: 1, label: "1", probability: 0.92 }, { value: 2, label: "2", probability: 0 }] };
+  const kind = { type: "choice", name: "kind", choice: "docs", confidence: 0.8, probabilities: [{ value: "docs", probability: 0.9 }, { value: "debug", probability: 0.1 }] };
   const t = { type: "predicate", name: "t", probability: 0.9 };
   const reply = (yesNo, score = level) => ({ config: { decision: { provider: "openai" } }, env: { OPENAI_API_KEY: "oa_test_1234567890" }, fetchFn: async (url, init) => {
     sent.push({ url, auth: init.headers.Authorization, body: JSON.parse(init.body) });
@@ -279,10 +280,10 @@ test("OpenAI's Decisions API is asked in its own shape and its answers read as S
     { type: "choice", name: "kind", instructions: "K", choices: [{ value: "docs", description: "prose" }, { value: "debug", description: "a fault" }] }] } });
   expect(r).toMatchObject({ provider: "openai", model: "gpt-6-luna", usage: { input_tokens: 3400 } });
   expect(r.answers.t).toEqual({ type: "noul", noul: 0.9 }); expect(r.answers.b).toEqual({ type: "noul", noul: 0.1 });
-  expect(r.answers.level).toMatchObject({ type: "score", score: 0.92, probabilities: { 0: 0.08, 1: 0.92, 2: 0 }, provider_confidence: 0.75 });
-  expect(r.answers.level.confidence).toBeCloseTo(0.88, 2);                        // recomputed on TypeSafe's scale
-  expect(r.answers.kind).toEqual({ type: "choice", choice: "docs", probabilities: { docs: 0.9, debug: 0.1 }, confidence: 0.8, provider_confidence: 0.5 });
-  expect((await ask(state, requested, reply(b, { ...level, probabilities: undefined }))).answers.level).toEqual({ type: "score", score: 0.92, confidence: 0.75 }); // a spread is optional, as for every provider
+  // OpenAI's confidence is TypeSafe's definition, so it is kept as sent, like Jev's.
+  expect(r.answers.level).toEqual({ type: "score", score: 0.92, probabilities: { 0: 0.08, 1: 0.92, 2: 0 }, confidence: 0.88 });
+  expect(r.answers.kind).toEqual({ type: "choice", choice: "docs", probabilities: { docs: 0.9, debug: 0.1 }, confidence: 0.8 });
+  expect((await ask(state, requested, reply(b, { ...level, probabilities: undefined }))).answers.level).toEqual({ type: "score", score: 0.92, confidence: 0.88 }); // a spread is optional, as for every provider
   await expect(ask(state, requested, reply({ type: "refusal", name: "b" }))).rejects.toThrow("OpenAI: the model declined to answer. If no backup decision model answered, add one with routr setup.");
 });
 

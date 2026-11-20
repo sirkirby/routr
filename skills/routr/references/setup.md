@@ -46,7 +46,9 @@ routr's tests (`docs/evidence.md`, "Decision models"):
   organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
   Workers AI Read, the only permission routr needs (https://dash.cloudflare.com/profile/api-tokens), and their account ID. What Workers
   AI's free allowance covers is in `docs/evidence.md`. `cloudflare:clef-flash`, a smaller model, reads levels too low more often.
-- **OpenAI's GPT-6 Luna** (`openai`): needs an OpenAI API key (https://platform.openai.com/api-keys).
+- **OpenAI's GPT-6 Luna** (`openai`): metered on their OpenAI account. 85 of 104 levels right, more often too low
+  than too high. On a few briefs it refuses a question, and routr asks the next model. Needs an OpenAI API key
+  (https://platform.openai.com/api-keys).
 - **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Ollama 0.40.1 or
   later, then the build `routr doctor` names: `clef-flash:9b-mxfp8` on Apple Silicon (12 GB, 5-7 s a brief on an M4
   Max), `clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA laptop GPU). It needs a GPU or Apple
@@ -72,8 +74,9 @@ says none is needed. Equivalent decision settings are kept as they are; duplicat
 Do not ask the user to paste a key to you, and never print or log it. Then run `routr doctor`: each decision model gets its own line saying whether it answers and why it does not.
 
 If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` (or `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID`, or `OPENAI_API_KEY`) in their shell profile works too, and wins over the saved file. Do not put a key in a project
-`.env`: routr does not read one, and it risks being committed.
+`CLOUDFLARE_ACCOUNT_ID`) in their shell profile works too, and wins over the saved file. For OpenAI, use `routr key set
+openai`: an `OPENAI_API_KEY` in the shell also reaches every worker started from it, Codex included. Do not put a key
+in a project `.env`: routr does not read one, and it risks being committed.
 Without a decision model routr still answers, but only with the fallback level.
 
 ## 3. Config

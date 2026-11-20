@@ -137,7 +137,8 @@ never shown); run again, its menu's "Decision model" changes it:
 - **Cloudflare's Clef** on Workers AI: an [API token](https://dash.cloudflare.com/profile/api-tokens) with
   Workers AI Read (the only permission routr needs), and your account ID. What Workers AI's free allowance covers is in
   [the evidence](docs/evidence.md#decision-models).
-- **OpenAI's GPT-6 Luna**: an [API key](https://platform.openai.com/api-keys).
+- **OpenAI's GPT-6 Luna**: an [API key](https://platform.openai.com/api-keys); metered on your OpenAI account. How it
+  reads, and the few briefs it refuses, is in [the evidence](docs/evidence.md#openais-gpt-6-luna-2026-11-20).
 - **Clef Flash on your own machine**, free: [Ollama](https://ollama.com) 0.40.1 or later and
   `ollama pull clef-flash:9b-mxfp8` on Apple Silicon (12 GB; 5-7 s a brief on an M4 Max), or
   `ollama pull clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA RTX 5090 laptop GPU). It needs a GPU

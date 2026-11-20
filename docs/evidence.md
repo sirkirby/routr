@@ -58,8 +58,9 @@ routr can ask on the same items.
 
 ## Decision models
 
-routr tries the ordered decision models chosen in `routr setup` until one answers: TypeSafe's Jev (the default), or Cloudflare's
-Clef, hosted on Workers AI or run on your own machine through Ollama. Both answer the same System One questions. Each
+routr tries the ordered decision models chosen in `routr setup` until one answers: TypeSafe's Jev (the default),
+Cloudflare's Clef, hosted on Workers AI or run on your own machine through Ollama, or OpenAI's GPT-6 Luna ([below](#openais-gpt-6-luna-2026-11-20)).
+Jev and Clef answer the same System One questions; GPT-6 Luna is asked them in its own API's shape. Each
 model below was run by the maintainers' gate on the saved items above, beside Jev in the same run (2026-10-11), with
 routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev, which favours it.
 
@@ -76,6 +77,40 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 | Same readings on 5 repeats (144 facts, 12 levels) | 139-140, 11 | 144, 12 | 144, 12 | 144, 12 | 144, 12 |
 | Time per brief | ~130 ms | ~420 ms | ~525 ms | 5-7 s (M4 Max) | ~5 s (M4 Max) |
 | `sure_at` | 0.8 | 0.7 | 0.5 | 0.6 | 0.6 |
+
+### OpenAI's GPT-6 Luna (2026-11-20)
+
+The same gate, three runs, beside Jev 1.14.0 (the pin since 2026-10-27) in the same run; Jev's figures are the mean of
+its three runs. GPT-6 Luna gave the same answers in all three. It is asked through OpenAI's Decisions API, which takes
+the same kinds of question (yes/no, choice, score) in its own shape; routr's wording is unchanged.
+
+| | Jev 1.14.0 | GPT-6 Luna (OpenAI) |
+|---|---|---|
+| Level right, 104 labelled briefs | 82.7 | 85 |
+| One level too low / too high | 8.3 / 13 | 11 / 8 |
+| Level right, the 36 real tasks | 28.3 | 26 (9 low, 1 high) |
+| "Standalone" decisively wrong (78 briefs) | 2 | 8 |
+| "Tiny" on the right side of 0.5 (30) | 27.7 | 27 |
+| Yes/no facts more often decisive than Jev's (of 12) | | 12 |
+| Report checks: expected readings (23) | 21.3 | 23 |
+| Reviewer verdicts right (80) | 67.7 | 69 |
+| Same readings on 5 repeats (144 facts, 12 levels) | 137.3, 11.3 | 144, 12 |
+| Time per request | ~80 ms | ~230 ms |
+| `sure_at` | 0.7 | 0.8 |
+
+- **Which way it is wrong.** More levels right than Jev overall, but more often too low, the costlier direction, and
+  fewer right on the real tasks. It reads "standalone" decisively wrong on 8 of 78 briefs against Jev's 2: a brief it
+  calls self-contained may still need context.
+- **Refusals.** OpenAI's API can refuse a single question. GPT-6 Luna refused one yes/no question on 3 of the 129
+  briefs (`tiny` on two, `approach_open` on one), on every one of five re-asks. routr treats a refusal as no answer and
+  asks the next model in the list, or uses the fallback level. The gate read those three as unclear.
+- **Confidence.** OpenAI's `confidence` is TypeSafe's definition (within 0.015 on all 258 levels and 225 choices), so
+  routr keeps it as sent. No bar from 0.5 to 0.8 makes its sure levels as reliable as Jev's (right 83-84% of the time,
+  against Jev's 91% at 0.7), so it keeps the highest, 0.8.
+- **Pin.** OpenAI offers the name `gpt-6-luna` only, with no dated version, so OpenAI can change the model behind it;
+  the gate is re-run on it.
+- **Cost.** Every request is metered on your OpenAI account; a request carried about 2,050 input tokens on average in
+  this run. What that costs is not measured here.
 
 ### Moving the pin: Jev 1.14 (2026-10-27)
 

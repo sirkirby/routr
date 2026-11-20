@@ -128,12 +128,17 @@ export const PROVIDERS = {
     },
     errorCode: (j) => Array.isArray(j?.answers) && j.answers.some((a) => a?.type === "refusal") ? "declined" : null,
     identity: (model) => isModel("openai", model),
+    // OpenAI's `confidence` is TypeSafe's definition: within 0.015 of it on all 258 levels and 225 choices of the
+    // 2026-11-20 gate, so it is kept as sent.
+    nativeConfidence: true,
     deadlineMs: 10000,
     models: {
-      // OpenAI's GPT-6 Luna: a contributor's placeholder from their own briefs, not the maintainers' gate; replace with
-      // the gate's result.
-      "gpt-6-luna": { sure_at: 0.8, torn: { right: 28, of: 39, low: 11, high: 0 },
-        hint: "needs an OpenAI API key · 28 of 39 levels right, more often too low" },
+      // Gate 2026-11-20 (3 runs, identical): 85 of 104 levels right (11 low, 8 high), real runs 26 of 36. No bar from
+      // 0.5 to 0.8 makes its sure levels as reliable as Jev's (83-84% against 91%), so it keeps the highest. On 3 of 129
+      // briefs it refuses one yes/no question every time, and the list moves on. OpenAI offers this name only, with no
+      // dated version, so the gate is re-run on it.
+      "gpt-6-luna": { sure_at: 0.8, torn: { right: 26, of: 36, low: 9, high: 1 },
+        hint: "needs an OpenAI API key, metered · 85 of 104 levels right, more often too low" },
     },
   },
   ollama: {
