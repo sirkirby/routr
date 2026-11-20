@@ -264,8 +264,9 @@ time, folder or branch:
 - Claude Code (pane and terminal): routr gives it a new UUIDv4 with `--session-id` before it starts.
 - Cursor (terminal): the worker's runner asks `cursor-agent create-chat` for a chat in the worker's own environment and
   folder, and starts it with `--resume <id>`.
-- Codex and Antigravity (terminal): a terminal worker's first message points at its own run folder, which no other
-  worker has. routr finds the session whose record holds exactly that message and started after the worker's runner:
+- Codex and Antigravity (terminal): a terminal worker's first message points at its prompt file, named for that
+  launch's own worker record, so no other worker's first message is the same. routr finds the one session whose
+  record holds exactly that message and started after the worker's runner (two such sessions name neither):
   Codex's rollout (its `session_meta` id) and Antigravity's conversation transcript (the conversation id it is filed under).
 - Codex, Cursor and Antigravity (pane): herdr's `agent_session` from the harness's hook, of kind `id`.
 - Headless: the id the harness names in its own stream, as before.

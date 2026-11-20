@@ -596,7 +596,8 @@ agy 1.5.13), each id checked against the harness's own files:
 | Antigravity | the transcript `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` whose first line, the person's own input, is exactly the worker's first message | the folder name, also the name of its conversation database |
 | Kiro | none: its V3 sessions are `sess_<uuid>` in `--list-sessions`, which keeps no first message to match | |
 
-A terminal worker's first message names its own run folder, so a match on its exact text is that worker and no other.
+A terminal worker's first message names its prompt file, `prompt-<record id>.md`, so a match on its exact text is that
+launch and no other, even in a run folder a later worker of the same name reuses; two matches name neither.
 Codex wrote its rollout's user message about 3 seconds after launch ended; a traced launch waits up to 20 seconds.
 In a pane the first message is the whole wrapped task, so Codex, Cursor and Antigravity panes use herdr's
 `agent_session` (above).

@@ -20,8 +20,7 @@ export const RECORD_BACKENDS = ["headless", "terminal"];
 // The record's shape, as code: each field and what it must be. Never the brief, and of the environment only the
 // trace-context carriers within routr's limits, which every load checks again (savedCarriers). A terminal worker's also
 // has `terminal` (its address, once hc gave one), `terminal_name` and `config` (where-is-my-config paths, checked again
-// by savedConfigLocations), and `session` once launch knew it (its harness's own session id, worker-session.mjs); its
-// prompt is a file beside the record, never in it.
+// by savedConfigLocations); its prompt is a file beside the record, never in it.
 // One launched on an extra account also has `subscription`, its name, `config_dir`, its folder, and `default_folder`,
 // whether its variable was removed: the account is made again from them at every start (harnesses' workerAccount).
 const str = (v) => typeof v === "string" && v !== "";
@@ -33,12 +32,12 @@ const SHAPE = {
   carriers: (v) => plain(v) && Object.values(v).every((x) => typeof x === "string"),
   subagent_model: str, subagent_effort: str, launch: plain, subscription: str, config_dir: str, default_folder: (v) => typeof v === "boolean",
   worktree: (v) => plain(v) && ["branch", "path", "source"].every((k) => str(v[k])),
-  terminal: str, terminal_name: str, session: (v) => typeof v === "string" && /^[0-9a-f-]{16,64}$/.test(v), config: (v) => plain(v) && Object.values(v).every((x) => typeof x === "string"),
+  terminal: str, terminal_name: str, config: (v) => plain(v) && Object.values(v).every((x) => typeof x === "string"),
 };
 const REQUIRED = { headless: ["format", "id", "name", "backend", "kind", "model", "effort", "cwd", "created_at", "carriers"] };
 REQUIRED.terminal = [...REQUIRED.headless, "terminal_name", "config"];
 const ONLY = { headless: new Set([...REQUIRED.headless, "subagent_model", "subagent_effort", "launch", "worktree", "subscription", "config_dir", "default_folder"]) };
-ONLY.terminal = new Set([...ONLY.headless, "terminal_name", "config", "terminal", "session"]);
+ONLY.terminal = new Set([...ONLY.headless, "terminal_name", "config", "terminal"]);
 // Strict: a field missing, of the wrong kind, or not of this backend is a mistake in routr, never the user's input.
 const built = (r) => {
   const backend = RECORD_BACKENDS.includes(r.backend) ? r.backend : null;

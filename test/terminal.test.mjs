@@ -10,7 +10,7 @@ import { sendCommand, stopCommand, waitCommand, workersCommand } from "../src/li
 import { watchCommand } from "../src/lib/watch.mjs";
 import { hold } from "../src/lib/headless.mjs";
 import { workers as workerSet } from "../src/lib/worker.mjs";
-import { firstMessage, reportToLead, runRecord, runWorker as runner } from "../src/lib/backend-terminal.mjs";
+import { firstMessage, promptFile, reportToLead, runRecord, runWorker as runner } from "../src/lib/backend-terminal.mjs";
 import { ADAPTERS } from "../src/lib/headless.mjs";
 import { HARNESSES, KINDS, plan, terminalPlan } from "../src/lib/harnesses.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
@@ -96,7 +96,7 @@ test("Kiro's headless start stays its ACP mode, with no engine flag and no chat,
 
 const V4 = "8d997247-4335-4a7b-8a2e-d883ab27799f";
 // What a runner records as it starts the harness, including the id it gave it (as runWorker writes run.json).
-const ranWith = (patch) => ({ run: () => { writeFileSync(join(runDir("w1"), "run.json"), JSON.stringify({ pid: 1, started_at: new Date().toISOString(), harness_pid: 2, ...patch })); return undefined; } });
+const ranWith = (patch) => ({ run: () => { writeFileSync(join(runDir("w1"), "run.json"), JSON.stringify({ pid: 1, started_at: new Date().toISOString(), id: recordOf().id, harness_pid: 2, ...patch })); return undefined; } });
 test("in the app a worker gets a tab of its own, running routr's runner, with its task in an owner-only file and in no argv or output", async () => {
   const f = fixture("claude", { hc: fakeHc({ over: ranWith({ session: V4 }) }) }), r = await f.go();
   expect([r.ok, r.state, r.pane]).toEqual([true, "prompted", null]);
@@ -112,14 +112,15 @@ test("in the app a worker gets a tab of its own, running routr's runner, with it
   expect(run).not.toContain("--rm"); // what it finished with stays to read until cleanup
   expect(f.hc.calls.find((c) => c.cmd === "herdr-app").args).toEqual(["do", "tab.rename", "--id", tab.slice("herdr.tab=".length), "--name", "w1"]);
   // What launch answers, and its record.
-  // Its session: the id its runner gave Claude Code as it started it, kept on its record.
+  // Its session: the id its runner gave Claude Code as it started it, as its runner recorded it for this record.
   expect(r.worker).toEqual({ name: "w1", backend: "terminal", run: runDir("w1"), terminal: "t9", session: V4 });
   const w = JSON.parse(readFileSync(join(runDir("w1"), "worker.json"), "utf8"));
-  expect([w.backend, w.terminal, w.terminal_name, w.kind, w.model, w.session]).toEqual(["terminal", "t9", "w1", "claude", "m", V4]);
+  expect([w.backend, w.terminal, w.terminal_name, w.kind, w.model]).toEqual(["terminal", "t9", "w1", "claude", "m"]);
+  expect(w).not.toHaveProperty("session");
   // The id is the runner's to give: launch shows where it goes.
   expect(r.start.argv.slice(-3, -1)).toEqual(["--session-id", "<session id>"]);
   // The prompt: whole, wrapped, owner-only, and nowhere else.
-  const file = join(runDir("w1"), "prompt.md"), prompt = readFileSync(file, "utf8");
+  const file = promptFile(runDir("w1"), recordOf().id), prompt = readFileSync(file, "utf8");
   expect(prompt).toStartWith("You are a routr worker.");
   expect(prompt).toContain(SECRET);
   expect(prompt).toEndWith("Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.");
@@ -205,7 +206,7 @@ test("a harness that reports no status counts once its process runs, and is told
   const r = await c.go();
   expect(r.state).toBe("prompted");
   expect(gets).toBe(2);
-  const prompt = readFileSync(join(runDir("w1"), "prompt.md"), "utf8");
+  const prompt = readFileSync(promptFile(runDir("w1"), recordOf().id), "utf8");
   expect(prompt.endsWith(reportToLead("t3"))).toBe(true);
   expect(prompt).toContain("hc send t3");
   expect(noted(r)).toContain("reports no status");
@@ -215,7 +216,7 @@ test("a harness that reports no status counts once its process runs, and is told
   expect(existsSync(join(runDir("w1"), "cursor-config", "cli-config.json"))).toBe(true);
   rmSync(runDir("w1"), { recursive: true, force: true });
   await fixture("claude").go();
-  expect(readFileSync(join(runDir("w1"), "prompt.md"), "utf8")).not.toContain("hc send");
+  expect(readFileSync(promptFile(runDir("w1"), recordOf().id), "utf8")).not.toContain("hc send");
 });
 
 test("a blocked start comes back as needs_input, with the screen withheld as the worker has its task, and routr answers nothing", async () => {
@@ -376,7 +377,7 @@ test("a harness starts where the terminal is, on its stdio, with a caller and a 
   expect(runRecord("w1").value.session).toBe(V4);
   const [exe, argv, opts] = started[0];
   expect(exe).toBe("cursor-agent");
-  expect(argv).toEqual(["--yolo", "--trust", "--model", "m", "--resume", V4, firstMessage(join(runDir("w1"), "prompt.md"))]);
+  expect(argv).toEqual(["--yolo", "--trust", "--model", "m", "--resume", V4, firstMessage(promptFile(runDir("w1"), recordOf().id))]);
   expect(JSON.stringify(argv)).not.toContain("only the worker");
   expect([opts.stdio, opts.cwd, opts.visible]).toEqual(["inherit", r.cwd, true]);
   expect(opts.env.CURSOR_CONFIG_DIR).toBe(join(runDir("w1"), "cursor-config"));
@@ -411,6 +412,33 @@ test("the runner stays until the harness has gone, passes on hc kill's signals, 
   expect(said.at(-1)).toBe(`routr: ${runDir("nobody")} does not hold the terminal worker launch started; nothing was started`);
 });
 
+test("a worker's id is only ever its own launch's: another record's runner or kept id is never taken, and a found one is kept for it", async () => {
+  await fixture("codex").go();
+  const dir = runDir("w1"), me = recordOf(), look = async () => (await workersCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "working" }, turn: 1 }] }).run })).workers[0];
+  const V7 = "01a1f952-b5ab-7fe0-89e1-f7887d45923e", OLD = "01a1f952-0000-7fe0-89e1-f7887d45923e", codexHome = join(process.env.HOME, ".codex");
+  // What a runner and a lookup of an earlier worker of the same name left: never this one's.
+  writeFileSync(join(dir, "run.json"), JSON.stringify({ pid: 1, started_at: new Date(Date.now() - 1000).toISOString(), id: "a".repeat(32), session: OLD }));
+  writeFileSync(join(dir, "session.json"), JSON.stringify({ id: "a".repeat(32), session: OLD }));
+  expect(await look()).toMatchObject({ session: null, session_missing: "not_found" });
+  // Its own runner's record, and Codex's rollout of its own first message, which names this launch's prompt file.
+  writeFileSync(join(dir, "run.json"), JSON.stringify({ pid: 1, started_at: new Date(Date.now() - 1000).toISOString(), id: me.id }));
+  const d = new Date(), day = join(codexHome, "sessions", String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0"));
+  mkdirSync(day, { recursive: true });
+  const line = (id, text) => [{ type: "session_meta", payload: { id, timestamp: d.toISOString() } }, { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } }].map((l) => JSON.stringify(l)).join("\n");
+  writeFileSync(join(day, "rollout-old.jsonl"), line(OLD, firstMessage(promptFile(dir, "a".repeat(32)))));
+  expect(await look()).toMatchObject({ session: null, session_missing: "not_found" });
+  writeFileSync(join(day, "rollout-new.jsonl"), line(V7, firstMessage(promptFile(dir, me.id))));
+  expect(await look()).toMatchObject({ session: V7 });
+  expect(JSON.parse(readFileSync(join(dir, "session.json"), "utf8"))).toEqual({ id: me.id, session: V7 });
+  // Kept: the rollout is not read again. Two sessions with its first message are not told apart: neither is named.
+  rmSync(join(day, "rollout-new.jsonl"));
+  expect(await look()).toMatchObject({ session: V7 });
+  rmSync(join(dir, "session.json"));
+  writeFileSync(join(day, "rollout-new.jsonl"), line(V7, firstMessage(promptFile(dir, me.id))));
+  writeFileSync(join(day, "rollout-twin.jsonl"), line(OLD, firstMessage(promptFile(dir, me.id))));
+  expect(await look()).toMatchObject({ session: null, session_missing: "not_found" });
+});
+
 test("a test here runs in a home of its own, so nothing of it reaches another file sharing this process", () => {
   expect(process.env.HOME).not.toBe(HOME_BEFORE);
   expect(runDir("w1").startsWith(process.env.HOME)).toBe(true);
@@ -434,7 +462,7 @@ test("the runner finds its worker by the folder launch passed, under another HOM
   expect(go("not-its-id").exitCode).toBe(2);
   expect(existsSync(out)).toBe(false);
   expect(go(id).exitCode).toBe(4);
-  expect(readFileSync(out, "utf8")).toContain(firstMessage(join(folder, "prompt.md")));
+  expect(readFileSync(out, "utf8")).toContain(firstMessage(promptFile(folder, id)));
   expect(JSON.parse(readFileSync(join(folder, "run.json"), "utf8")).exit_code).toBe(4);
 }, 20000);
 
@@ -485,7 +513,7 @@ test("its terminal goes first, and a worktree with uncommitted work is still kep
   expect(r.headline).toContain("uncommitted");
   expect(hc.words()).toEqual(["get", "kill", "rm"]);
   expect(existsSync(worktree.path)).toBe(true);
-  expect(existsSync(join(runDir("w1"), "prompt.md"))).toBe(true);
+  expect(existsSync(promptFile(runDir("w1"), recordOf().id))).toBe(true);
   // Again, with its terminal gone: it is told so, and goes on to the same check.
   const again = await cleanup(["--worker", "w1"], { hc: fakeHc({ over: { get: { code: 1, out: "", err: "no terminal t9" } } }).run, settings: () => cfg() });
   expect(again.state).toBe("refused");

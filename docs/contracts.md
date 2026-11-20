@@ -1015,8 +1015,9 @@ A worker in a herdr-core terminal gets a row of its record and of where its term
 
 `session` is the harness's own session id for this worker, only one routr can prove is its own: the id its runner
 gave it as it started (Claude Code's `--session-id`; Cursor's `create-chat`, then `--resume`), or the one its
-harness's record holds for its first message, which names its run folder (Codex's rollout, Antigravity's
-conversation transcript). It stays the id the worker started with, even when the harness later moves to a new session (`/clear`).
+harness's record holds for its first message, which names its prompt file, named for this launch's record (Codex's
+rollout, Antigravity's conversation transcript); two sessions holding it name neither. A found id is kept in the run
+folder for that record. It stays the id the worker started with, even when the harness later moves to a new session (`/clear`).
 `session_missing` is a fixed code: `no_source` (Kiro keeps none routr can prove), `not_assigned` (Cursor's
 `create-chat` gave none), or `not_found` (the harness has not written it yet; routr looks again on each read). The
 states:

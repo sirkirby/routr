@@ -29,7 +29,7 @@ export async function assignSession(kind, { cwd, env, ask = run } = {}) {
   // Measured 2026-11-20, cursor-agent 2026.11.19: prints one UUIDv4 line within a second, and starts no model turn. In a
   // config folder it has not run in (a worker's private one, every launch) it then stays running for over a minute, so
   // its first line is its answer and it is stopped then. The chat is kept in that folder (`chats/`).
-  const out = await ask(HARNESSES[kind].executable, ["create-chat"], { cwd, env, timeoutMs: 15000, until: (text) => text.includes("\n") });
+  const out = await ask(HARNESSES[kind].executable, ["create-chat"], { cwd, env, timeoutMs: 15000, maxBytes: 4096, until: (text) => text.includes("\n") });
   const id = typeof out === "string" ? sessionId(out.trim()) : null;
   return id ? { session: id } : { missing: "not_assigned" };
 }
@@ -50,6 +50,8 @@ const readPart = (file, { bytes }) => {
 const records = (text) => (text ?? "").split("\n").flatMap((l) => { try { const v = JSON.parse(l); return v && typeof v === "object" ? [v] : []; } catch { return []; } });
 // Two seconds either side of the launch: a clock read in another process, never a match by itself.
 const SLACK_MS = 2000;
+// The one session that matched. Two holding the same first message are not told apart by a guess: neither is named.
+const only = (found) => (new Set(found.map((f) => f.id)).size === 1 ? found[0].id : null);
 
 // Codex: `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*.jsonl`, by the local date it started. Its first line is
 // `session_meta` (payload.id, a UUIDv7, its session id, the one it names as CODEX_THREAD_ID); the worker's first message
@@ -73,7 +75,7 @@ function findCodex(w, message, since, now) {
       if (asked) found.push({ id, at });
     }
   }
-  return found.sort((a, b) => b.at - a.at)[0]?.id ?? null;
+  return only(found);
 }
 
 // Antigravity: each conversation's transcript is `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`,
@@ -92,7 +94,7 @@ function findAgy(w, message, since) {
     if (first?.step_index === 0 && first.type === "USER_INPUT" && first.source === "USER_EXPLICIT" && at >= since - SLACK_MS
       && typeof first.content === "string" && first.content.startsWith(`<USER_REQUEST>\n${message}\n</USER_REQUEST>`)) found.push({ id: name, at });
   }
-  return found.sort((a, b) => b.at - a.at)[0]?.id ?? null;
+  return only(found);
 }
 const FINDERS = { codex: findCodex, agy: findAgy };
 

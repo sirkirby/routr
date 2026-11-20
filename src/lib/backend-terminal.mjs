@@ -25,7 +25,11 @@ import { accountShownEnv, configLocations, FORWARDED, launchCarrierWarnings, ter
 import { processAlive, readJsonFile, writeJsonAtomic } from "./state-files.mjs";
 import { start } from "./processes.mjs";
 
-const PROMPT_FILE = "prompt.md", RUN_FILE = "run.json", SEND_FILE = "send.json", MESSAGE_FILE = "message";
+const RUN_FILE = "run.json", SEND_FILE = "send.json", MESSAGE_FILE = "message", SESSION_FILE = "session.json";
+// The prompt file is named for the launch's record id, so the first message that points at it is this launch's alone,
+// even in a run folder a later worker of the same name reuses: a harness's record of that message is this worker's
+// session and no other's (worker-session.mjs).
+export const promptFile = (dir, id) => join(dir, `prompt-${id}.md`);
 const pausing = (ms) => new Promise((r) => setTimeout(r, ms));
 const POLL_MS = 250;
 // A harness that has run this long and sent core no report at all is taken to be at a question it reports nothing for,
@@ -128,9 +132,9 @@ export async function launchTerminal(o, out, ctx) {
   catch (e) { launchFailed(out, e, seen.opened); }
   return { attempted: seen.opened, submitted: seen.opened, adopted: false, cleanup: out.worker ? ["routr", "cleanup", "--worker", o.name] : null };
 }
-// The worker's own conversation (worker-session.mjs), as its runner assigned it or its harness's record holds it, kept
-// on its record and its answer's `worker`. A traced launch waits for one its harness has not written yet: its span is
-// to carry it. Never fails the launch.
+// The worker's own conversation (worker-session.mjs), as its runner assigned it or its harness's record holds it, on
+// its answer's `worker`. A traced launch waits for one its harness has not written yet: its span is to carry it. Never
+// fails the launch.
 async function learnSession(out, { sleep = pausing, now = () => Date.now() }) {
   try {
     const dir = out.worker.run, w = readRecordAt(dir);
@@ -138,15 +142,19 @@ async function learnSession(out, { sleep = pausing, now = () => Date.now() }) {
     const got = await sessionNow(w, dir, { wait: tracing() ? SESSION_WAIT_MS : 0, sleep, now });
     out.worker.session = got.session ?? null;
     if (got.missing) out.worker.session_missing = got.missing;
-    if (got.session) recordStore().write(dir, amend(w, { session: got.session }));
   } catch {}
 }
-// A worker's id as it stands: kept on its record once found, else what its runner assigned, else its harness's record
-// of its first message, in a session started after its runner was. `wait`: as workerSession takes it.
+// A worker's id as it stands: what its runner assigned, else one found before (`session.json`, kept under the record's
+// id: a lookup that ends after its worker was replaced is never taken for the new one's), else its harness's record of
+// its first message. Found once, kept: a look does not read the harness's files again. `wait`: as workerSession takes it.
 export async function sessionNow(w, dir, { wait = 0, sleep, now } = {}) {
-  if (sessionId(w.session)) return { session: w.session };
-  const ran = runRecord(w.name, dir).value;
-  return workerSession(w, { assigned: ran, message: firstMessage(join(dir, PROMPT_FILE)), since: Date.parse(ran?.started_at), wait, sleep, now });
+  const kept = readJsonFile(join(dir, SESSION_FILE)).value;
+  if (kept?.id === w.id && sessionId(kept.session)) return { session: kept.session };
+  const read = runRecord(w.name, dir).value, ran = read?.id === w.id ? read : null;
+  const got = await workerSession(w, { assigned: ran, message: firstMessage(promptFile(dir, w.id)), since: Date.parse(ran?.started_at), wait, sleep, now });
+  // Its folder is never made again here: one cleanup removed stays removed.
+  if (got.session && !sessionSource(w.kind)?.assign) try { writeJsonAtomic(join(dir, SESSION_FILE), { id: w.id, session: got.session }, { mkdir: false, mode: 0o600 }); } catch {}
+  return got;
 }
 async function startTerminal(o, out, { prompt, env, settings, ready, checkListed, hc = client, self, sleep = pausing, now = () => Date.now() }, seen) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
@@ -166,7 +174,7 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   const { dir, wt, unreserve } = await takeRun(o, out, plannedTree);
   let w;
   const store = recordStore(), save = (patch) => { w = amend(w, patch); store.write(dir, w); };
-  const file = join(dir, PROMPT_FILE);
+  const file = promptFile(dir, id);
   const text = h.noStatus ? `${prompt}\n\n${reportToLead(lead.address)}` : prompt;
   const found = launchCarriers(env), locations = configLocations(env);
   let shown;
@@ -248,7 +256,8 @@ export async function runWorker(dir, id, { env = process.env, begin = start, ask
   const w = readRecordAt(dir);
   if (w?.backend !== "terminal" || w.id !== id) { say(`routr: ${dir} does not hold the terminal worker launch started; nothing was started`); return 2; }
   let account; try { account = workerAccount(w)?.env; } catch (e) { say(`routr: ${e.message}; nothing was started`); return 2; }
-  const name = w.name, file = join(dir, RUN_FILE), began = { pid: process.pid, started_at: now() };
+  // `id`: the record it ran for, so what it records is never read as a later worker's of the same name.
+  const name = w.name, file = join(dir, RUN_FILE), began = { pid: process.pid, started_at: now(), id };
   // One runner per worker: a second start of it would be a second harness on the same work.
   try { writeFileSync(file, JSON.stringify(began) + "\n", { flag: "wx", mode: 0o600 }); }
   catch (e) { say(e?.code === "EEXIST" ? `routr: ${name} was started before; nothing was started now` : `routr: ${name}'s run folder could not be written (${typeof e?.code === "string" ? e.code : "write_failed"}); nothing was started`); return 2; }
@@ -256,7 +265,7 @@ export async function runWorker(dir, id, { env = process.env, begin = start, ask
   const notStarted = (code) => { record({ ended_at: now(), not_started: code }); say(`routr: ${HARNESSES[w.kind]?.label ?? w.kind} did not start (${code})`); return 127; };
   let child;
   try {
-    const planned = planOf(w, dir), first = firstMessage(join(dir, PROMPT_FILE)), adapter = terminalPlan(planned, first).env;
+    const planned = planOf(w, dir), first = firstMessage(promptFile(dir, w.id)), adapter = terminalPlan(planned, first).env;
     // The id it starts under, where routr gives it one: asked for in the environment and folder it runs in, and recorded
     // before it starts, for launch, workers and send to name (worker-session.mjs). Without one it still starts.
     const given = await assignSession(w.kind, { cwd: w.cwd, env: terminalEnv({ carriers: w.carriers, config: w.config, adapter, account }, env), ask });

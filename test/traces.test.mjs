@@ -199,7 +199,8 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
   // Its runner, as it starts Claude Code: the id it gave it, recorded beside the record.
   const given = "8d997247-4335-4a7b-8a2e-d883ab27799f";
   const hc = async (cmd, a) => { if (a[0] === "run") { label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length);
-    writeFileSync(join(a[a.indexOf("--run") + 1], "run.json"), JSON.stringify({ pid: 1, started_at: new Date().toISOString(), harness_pid: 2, session: given })); }
+    const run = a[a.indexOf("--run") + 1];
+    writeFileSync(join(run, "run.json"), JSON.stringify({ pid: 1, started_at: new Date().toISOString(), id: a[a.indexOf("--id") + 1], harness_pid: 2, session: given })); }
     return cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
       : a[0] === "get" ? answer({ address: "t9", name: "traced", state: "live", labels: { "routr.worker": label }, status: { state: "done" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" })
       : a[0] === "send" ? answer({ turn: 2, started: true }) : answer({}); };
@@ -236,19 +237,19 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
 const adviceFor = (home, task) => { const f = join(home, `advice-${briefSha(task).slice(0, 8)}.json`); writeFileSync(f, JSON.stringify({ id: "abc12345", brief_sha: briefSha(task), mode: "dispatch", level: "standard" })); return f; };
 test("a traced terminal Codex launch waits for the session its own record files under the worker's first message; send names it; Kiro says why it has none", async () => {
   const codexHome = scratch("codex-home"), x = exporting({ HC_TERMINAL_ID: "t3", CODEX_HOME: codexHome }), V7 = "01a1f952-b5ab-7fe0-89e1-f7887d45923e";
-  let label = null, looks = 0, ticks = 0, dir = null;
+  let label = null, looks = 0, ticks = 0, dir = null, id = null;
   const answer = (o) => ({ code: 0, out: JSON.stringify(o) });
   // Codex writes its rollout only once it has taken its first message: here, after launch's third look for it.
   const rollout = () => {
     const d = new Date(), day = join(codexHome, "sessions", String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0"));
     mkdirSync(day, { recursive: true });
-    const text = `Your task is in ${join(dir, "prompt.md")}. Read that whole file now and do what it says.`;
+    const text = `Your task is in ${join(dir, `prompt-${id}.md`)}. Read that whole file now and do what it says.`;
     writeFileSync(join(day, "rollout-x.jsonl"), [{ type: "session_meta", payload: { id: V7, timestamp: d.toISOString() } },
       { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } }].map((l) => JSON.stringify(l)).join("\n"));
   };
   const hc = async (cmd, a) => {
-    if (a[0] === "run") { label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length); dir = a[a.indexOf("--run") + 1];
-      writeFileSync(join(dir, "run.json"), JSON.stringify({ pid: 1, started_at: new Date(Date.now() - 1000).toISOString(), harness_pid: 2 })); }
+    if (a[0] === "run") { label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length); dir = a[a.indexOf("--run") + 1]; id = a[a.indexOf("--id") + 1];
+      writeFileSync(join(dir, "run.json"), JSON.stringify({ pid: 1, started_at: new Date(Date.now() - 1000).toISOString(), id, harness_pid: 2 })); }
     return cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
       : a[0] === "get" ? answer({ address: "t9", name: "codexw", state: "live", labels: { "routr.worker": label }, status: { state: "working" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" })
       : a[0] === "send" ? answer({ turn: 2, started: true }) : answer({}); };

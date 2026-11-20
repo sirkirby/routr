@@ -243,8 +243,8 @@ export const selfCommand = (args) => (!standalone() && !ROUTR_ENTRY ? null : [pr
 // throw.
 // `status: true` resolves the exit code instead, for a command whose only answer is on stderr. `exitZero: true` resolves
 // null for a command that printed and then exited non-zero: what it printed is not taken as its answer.
-// `account`: as start takes it.
-export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, env, status = false, exitZero = false, account } = {}) {
+// `account`: as start takes it. `maxBytes`: more output than this (characters) is no answer: null, and the process stopped.
+export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, env, status = false, exitZero = false, account, maxBytes = 16 * 1024 * 1024 } = {}) {
   return new Promise((resolve) => {
     let out = "", done = false, exited = false;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); if (!exited) stop(child); resolve(v); };
@@ -253,7 +253,7 @@ export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, env, statu
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.on("exit", () => { exited = true; });
-    child.stdout.on("data", (d) => { out += d; if (until?.(out)) finish(out); });
+    child.stdout.on("data", (d) => { if (done) return; out += d; if (out.length > maxBytes) finish(null); else if (until?.(out)) finish(out); });
     child.on("close", (code) => finish(status ? code : exitZero && code !== 0 ? null : out || null));
     if (input) child.stdin.write(input); else child.stdin.end();
   });
