@@ -95,7 +95,9 @@ async function run(id, text) {
   if (process.env.FAKE_START_GATE && n > 0) {
     // FAKE_START_SWAP: a second start while one waits refuses the waiting one and waits in its place.
     if (starting && !process.env.FAKE_START_SWAP) return out({ id, error: { code: -32600, message: "a turn is already starting" } });
-    if (starting) { out({ id: starting, error: { code: -32600, message: "superseded" } }); fs.writeFileSync(process.env.FAKE_START_PENDING + "-swapped", ""); }
+    // The marker comes before the refusal: a test that awaits the refused send then finds it (written after, it raced
+    // on Windows CI, #187).
+    if (starting) { fs.writeFileSync(process.env.FAKE_START_PENDING + "-swapped", ""); out({ id: starting, error: { code: -32600, message: "superseded" } }); }
     starting = id; fs.writeFileSync(process.env.FAKE_START_PENDING, "");
     for (let i = 0; i < 400 && starting === id && !fs.existsSync(process.env.FAKE_START_GATE); i++) await sleep(50);
     if (starting !== id) return;
