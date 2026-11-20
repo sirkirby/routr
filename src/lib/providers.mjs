@@ -9,8 +9,8 @@
 // sure_at, and the numbers the "torn" note quotes. Profiles describe routr's instrument, never a worker model: nothing
 // here ranks or prices the models that do the work. Results per model: docs/evidence.md, "Decision models".
 //
-// Profiles, from the gate of 2026-10-11, and for jev-1.14.0 the gate of 2026-10-27 (three runs; docs/evidence.md,
-// "Moving the pin") (104 labelled briefs; 36 real runs from the maintainer's worker runs):
+// Profiles, from the gate of 2026-10-11, for jev-1.14.0 the gate of 2026-10-27 (three runs; docs/evidence.md,
+// "Moving the pin"), and for gpt-6-luna the gate of 2026-11-20 (three runs) (104 labelled briefs; 36 real runs from the maintainer's worker runs):
 // - sure_at: the lowest bar on 0.5..0.8 at which the model's level, when "sure", is right at least as often as Jev's at
 //   0.8 (39 of 44, 89%), with confidence normalized as systemone.mjs does.
 // - torn: the level as routr presents it, on the 36 real runs: right, one level low, one level high.
@@ -19,6 +19,14 @@ import { CONFIG_DIR } from "./state-files.mjs";
 import { join } from "node:path";
 
 export const SECRETS_FILE = (h) => join(CONFIG_DIR(h), "env");
+
+const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+// OpenAI's answers, when the reply's list is readable: every entry an object with a string name, no name twice.
+function openaiAnswers(j) {
+  const answers = isObject(j) ? j.answers : null;
+  if (!Array.isArray(answers) || !answers.every((a) => isObject(a) && typeof a.name === "string")) return null;
+  return new Set(answers.map((a) => a.name)).size === answers.length ? answers : null;
+}
 
 // Ollama's own variable for where its server listens (`ollama serve` reads it), read the way Ollama's own
 // client reads it (envconfig.Host): a bare host or host:port is http on 11434; a URL with a scheme and no port
@@ -66,7 +74,7 @@ export const PROVIDERS = {
       // on verified outcomes it over-rated less and read fewer tasks as strong (docs/evidence.md, "Moving the pin").
       // sure_at 0.7: its sure levels were right 145 of 160 there, against 1.13's 115 of 129 at 0.8; 0.65 fell below.
       "jev-1.14.0": { sure_at: 0.7, torn: { right: 28, of: 36, low: 7, high: 1 },
-        hint: "needs a TypeSafe API key · reads the level most accurately on routr's tests: 81-82 of 104 right" },
+        hint: "needs a TypeSafe API key · the most levels right on the real tasks in routr's tests: 28 of 36" },
     },
   },
   cloudflare: {
@@ -116,21 +124,28 @@ export const PROVIDERS = {
       type === "score" ? { type, name, instructions, levels: criteria.map((description, i) => ({ label: String(i), description })) }
         : type === "choice" ? { type, name, instructions, choices: Object.entries(criteria).map(([value, description]) => ({ value, description })) }
           : { type: "predicate", name, instructions: criteria ? `${instructions}\n${Object.entries(criteria).map(([value, description]) => `${value}: ${description}`).join("\n")}` : instructions }) }),
-    // Named answers and spreads become System One's objects; readAnswers checks them against the request.
-    // As with JSON object keys, the last repeated name or probability value wins. A refusal means no reading.
+    // Named answers and spreads become System One's objects; readAnswers checks them against the request. A name or a
+    // spread value given twice is unreadable: keeping either would hide the other, unchecked.
     unwrap: (j) => {
-      try {
-        if (j.answers.some((a) => a.type === "refusal")) return null;
-        return { ...j, answers: Object.fromEntries(j.answers.map((a) => [a.name, a.type === "predicate"
-          ? { type: "noul", noul: a.probability }
-          : { ...a, probabilities: a.probabilities && Object.fromEntries(a.probabilities.map((x) => [x.value, x.probability])) }])) };
-      } catch { return null; }
+      const answers = openaiAnswers(j);
+      if (!answers || answers.some((a) => a.type === "refusal")) return null;
+      const spreads = answers.map((a) => a.probabilities).filter((p) => p !== undefined);
+      if (spreads.some((p) => !Array.isArray(p) || !p.every(isObject) || new Set(p.map((x) => String(x.value))).size !== p.length)) return null;
+      return { ...j, answers: Object.fromEntries(answers.map((a) => [a.name, a.type === "predicate"
+        ? { type: "noul", noul: a.probability }
+        : { ...a, probabilities: a.probabilities && Object.fromEntries(a.probabilities.map((x) => [x.value, x.probability])) }])) };
     },
-    errorCode: (j) => Array.isArray(j?.answers) && j.answers.some((a) => a?.type === "refusal") ? "declined" : null,
+    // A successful reply may refuse some questions and answer the rest (HTTP 200). It counts as declined only when it
+    // is otherwise readable and every refused name is one routr asked; anything else is an unreadable reply.
+    refused: (j, questions) => {
+      const answers = openaiAnswers(j);
+      return Boolean(answers?.some((a) => a.type === "refusal") && answers.every((a) => Object.hasOwn(questions, a.name)));
+    },
     identity: (model) => isModel("openai", model),
     // OpenAI's `confidence` is TypeSafe's definition: within 0.015 of it on all 258 levels and 225 choices of the
     // 2026-11-20 gate, so it is kept as sent.
     nativeConfidence: true,
+    unversioned: true, // OpenAI documents only the name `gpt-6-luna`, with no dated version
     deadlineMs: 10000,
     models: {
       // Gate 2026-11-20 (3 runs, identical): 85 of 104 levels right (11 low, 8 high), real runs 26 of 36. No bar from

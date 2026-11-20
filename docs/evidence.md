@@ -61,7 +61,8 @@ routr can ask on the same items.
 routr tries the ordered decision models chosen in `routr setup` until one answers: TypeSafe's Jev (the default),
 Cloudflare's Clef, hosted on Workers AI or run on your own machine through Ollama, or OpenAI's GPT-6 Luna ([below](#openais-gpt-6-luna-2026-11-20)).
 Jev and Clef answer the same System One questions; GPT-6 Luna is asked them in its own API's shape. Each
-model below was run by the maintainers' gate on the saved items above, beside Jev in the same run (2026-10-11), with
+model in the first table was run by the maintainers' gate on the saved items above, beside Jev in the same run
+(2026-10-11); GPT-6 Luna in its own gate beside Jev 1.14.0 (2026-11-20, below). All were asked
 routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev, which favours it.
 
 | | Jev 1.13.0 (TypeSafe) | Clef (Workers AI) | Clef Flash (Workers AI) | Clef Flash (Ollama, MLX) | Clef Flash (Ollama, GGUF) |
@@ -82,31 +83,38 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 
 The same gate, three runs, beside Jev 1.14.0 (the pin since 2026-10-27) in the same run; Jev's figures are the mean of
 its three runs. GPT-6 Luna gave the same answers in all three. It is asked through OpenAI's Decisions API, which takes
-the same kinds of question (yes/no, choice, score) in its own shape; routr's wording is unchanged.
+the same kinds of question (yes/no, choice, score) in its own shape; routr's wording is unchanged. The gate held it
+as a pin: worse beyond tolerance on levels read too low, on the real tasks, and on `standalone`. It is offered
+beside Jev, as Clef is.
 
 | | Jev 1.14.0 | GPT-6 Luna (OpenAI) |
 |---|---|---|
 | Level right, 104 labelled briefs | 82.7 | 85 |
 | One level too low / too high | 8.3 / 13 | 11 / 8 |
 | Level right, the 36 real tasks | 28.3 | 26 (9 low, 1 high) |
-| "Standalone" decisively wrong (78 briefs) | 2 | 8 |
+| "Standalone" on the right side of 0.5 (78 briefs) | 68 | 65 |
+| "Standalone" decisively wrong (78) | 2 | 8 |
 | "Tiny" on the right side of 0.5 (30) | 27.7 | 27 |
+| "Tiny" decisively wrong (30) | 0 | 2 |
 | Yes/no facts more often decisive than Jev's (of 12) | | 12 |
 | Report checks: expected readings (23) | 21.3 | 23 |
 | Reviewer verdicts right (80) | 67.7 | 69 |
 | Same readings on 5 repeats (144 facts, 12 levels) | 137.3, 11.3 | 144, 12 |
-| Time per request | ~80 ms | ~230 ms |
+| Time per brief | ~80 ms | ~230 ms |
 | `sure_at` | 0.7 | 0.8 |
 
 - **Which way it is wrong.** More levels right than Jev overall, but more often too low, the costlier direction, and
   fewer right on the real tasks. It reads "standalone" decisively wrong on 8 of 78 briefs against Jev's 2: a brief it
   calls self-contained may still need context.
 - **Refusals.** OpenAI's API can refuse a single question. GPT-6 Luna refused one yes/no question on 3 of the 129
-  briefs (`tiny` on two, `approach_open` on one), on every one of five re-asks. routr treats a refusal as no answer and
-  asks the next model in the list, or uses the fallback level. The gate read those three as unclear.
+  briefs (`tiny` on two, `approach_open` on one), on every one of five re-asks. routr drops that whole reply, not only
+  the refused question, and asks the next model in the list, or uses the fallback level if there is none: give it a
+  backup. The gate read the refused questions as unclear and kept the rest, so on those three briefs it measured more
+  than routr uses.
 - **Confidence.** OpenAI's `confidence` is TypeSafe's definition (within 0.015 on all 258 levels and 225 choices), so
-  routr keeps it as sent. No bar from 0.5 to 0.8 makes its sure levels as reliable as Jev's (right 83-84% of the time,
-  against Jev's 91% at 0.7), so it keeps the highest, 0.8.
+  routr keeps it as sent. No bar from 0.5 to 0.8 makes its sure levels right as often as Jev 1.14.0's at 0.8 in the
+  same run (83-84% of the time, against 103 of 115, 90%); 0.95 reached 90%. `sure_at` stays within 0.5 to 0.8, so it
+  takes the top, 0.8, and is sure more often than its accuracy alone would allow.
 - **Pin.** OpenAI offers the name `gpt-6-luna` only, with no dated version, so OpenAI can change the model behind it;
   the gate is re-run on it.
 - **Cost.** Every request is metered on your OpenAI account; a request carried about 2,050 input tokens on average in
@@ -193,10 +201,10 @@ for Ollama, a new brief each time with the model loaded.
   left out of its own fit, left Clef at 71 and Clef Flash at 71. The difference is in how these models read the level
   question's wording, which was chosen on Jev (P23). Wording measured on Clef is open work.
 - **Confidence.** Providers compute `confidence` differently: TypeSafe by its own formula, Clef by entropy, which reads
-  a 0.92/0.08 split between two levels as 0.75 where TypeSafe reads 0.88. routr recomputes every non-TypeSafe answer on
-  TypeSafe's scale in the shared decision caller. Each model's `sure_at` is the lowest bar from 0.5 to 0.8 at which its level,
-  when sure, is right at least as often as Jev's at 0.8 (39 of 44): Clef 12 of 13 at 0.7, Clef Flash on Workers AI 27 of
-  30 at 0.5, on Ollama 23 of 24 at 0.6 (both builds). Few briefs reach those bars, so these are small counts. A `sure_at` you set
+  a 0.92/0.08 split between two levels as 0.75 where TypeSafe reads 0.88. routr recomputes Clef's answers on
+  TypeSafe's scale in the shared decision caller (OpenAI's already use TypeSafe's definition and are kept as sent). Each model's `sure_at` is the lowest bar from 0.5 to 0.8 at which its level,
+  when sure, is right at least as often as Jev's at 0.8 in the same gate (Jev 1.13.0: 39 of 44): Clef 12 of 13 at 0.7, Clef Flash on Workers AI 27 of
+  30 at 0.5, on Ollama 23 of 24 at 0.6 (both builds). When no bar qualifies, as for GPT-6 Luna, it is 0.8. Few briefs reach those bars, so these are small counts. A `sure_at` you set
   yourself applies to every model.
 - **Pins.** Jev is asked by exact version. Cloudflare's model names (`clef`, `clef-flash`) are not versioned, so
   Cloudflare can change the model behind a name; these numbers are from 2026-10-11 and the gate is re-run on them.

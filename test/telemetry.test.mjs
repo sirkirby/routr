@@ -285,6 +285,23 @@ test("OpenAI's Decisions API is asked in its own shape and its answers read as S
   expect(r.answers.kind).toEqual({ type: "choice", choice: "docs", probabilities: { docs: 0.9, debug: 0.1 }, confidence: 0.8 });
   expect((await ask(state, requested, reply(b, { ...level, probabilities: undefined }))).answers.level).toEqual({ type: "score", score: 0.92, confidence: 0.88 }); // a spread is optional, as for every provider
   await expect(ask(state, requested, reply({ type: "refusal", name: "b" }))).rejects.toThrow("OpenAI: the model declined to answer. If no backup decision model answered, add one with routr setup.");
+  // Unreadable replies stop as invalid_response, even with a refusal in them: a repeated name or spread value (a later
+  // entry would hide an earlier invalid one), a refusal beside a malformed entry, or a refusal of a question not asked.
+  const answering = (answers, status = 200) => ({ config: { decision: { provider: "openai" } }, env: { OPENAI_API_KEY: "oa_test_1234567890" },
+    fetchFn: async () => Response.json({ model: "gpt-6-luna", answers }, { status }) });
+  const code = (opts) => ask(state, requested, opts).then(() => "answered", (e) => e.code);
+  expect(await code(answering([t, b, level, kind, { ...level, score: 0.1 }]))).toBe("invalid_response");
+  expect(await code(answering([t, { ...b, probability: 500 }, level, kind, b]))).toBe("invalid_response");
+  expect(await code(answering([t, b, { ...level, probabilities: [...level.probabilities, { value: 0, label: "0", probability: 0.5 }] }, kind]))).toBe("invalid_response");
+  expect(await code(answering([null, { type: "refusal", name: "t" }]))).toBe("invalid_response");
+  expect(await code(answering([t, b, level, kind, { type: "refusal", name: "unasked" }]))).toBe("invalid_response");
+  expect(await code(answering([{ type: "refusal", name: "t" }, b, level, kind]))).toBe("declined");
+  // A refusal-shaped HTTP error is still an HTTP error: retried on 429, then reported with its status.
+  let now = 0, calls = 0;
+  const limited = { ...answering([{ type: "refusal", name: "t" }], 429), fetchFn: async () => { calls++; return Response.json({ answers: [{ type: "refusal", name: "t" }] }, { status: 429 }); },
+    clock: { now: () => now, sleep: async (ms) => { now += ms; } } };
+  await expect(ask(state, requested, limited)).rejects.toMatchObject({ code: "provider_error", status: 429 });
+  expect(calls).toBeGreaterThan(1);
 });
 
 // ---- Telemetry: data must not be LOST either. Leak tests above check that text cannot get out; these check that real

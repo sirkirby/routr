@@ -17,8 +17,8 @@ real worker reports: the ones that separated easy work from hard work, and good 
 and the rest were dropped ([the evidence](docs/evidence.md)). A System One model answers them with calibrated
 probabilities, the same way every time: [TypeSafe's Jev](https://docs.typesafe.ai) by default, well under a second,
 or Cloudflare's open [Clef](https://blog.cloudflare.com/clef-decision-models/), on your Cloudflare account or free
-on your own machine through [Ollama](https://ollama.com). Jev reads the level of work most
-accurately on routr's tests; [how each compares](docs/evidence.md#decision-models). Code adds each subscription's live usage. The
+on your own machine through [Ollama](https://ollama.com), or OpenAI's GPT-6 Luna on your OpenAI account. Jev gets the
+most levels right on the real tasks in routr's tests; [how each compares](docs/evidence.md#decision-models). Code adds each subscription's live usage. The
 lead agent, your smartest model, stays the judge.
 
 Choose an ordered decision list with `routr setup --decision typesafe,cloudflare:clef-flash`. The first answer
@@ -132,7 +132,7 @@ routr setup
 When no decision model answers yet, it asks which one should read your briefs, and for its key (typed without echo,
 never shown); run again, its menu's "Decision model" changes it:
 
-- **TypeSafe's Jev** (the default, and the one that reads the level most accurately on routr's tests): an
+- **TypeSafe's Jev** (the default, and the one that gets the most levels right on the real tasks in routr's tests): an
   [API key](https://console.typesafe.ai/keys).
 - **Cloudflare's Clef** on Workers AI: an [API token](https://dash.cloudflare.com/profile/api-tokens) with
   Workers AI Read (the only permission routr needs), and your account ID. What Workers AI's free allowance covers is in

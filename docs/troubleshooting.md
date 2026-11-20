@@ -58,8 +58,8 @@ If doctor says the key was refused, that token may lack the Workers AI permissio
 Workers AI Read.
 
 An OpenAI key in your shell (`OPENAI_API_KEY`, as OpenAI's own tools use) wins over the one `routr key set` saved,
-and the harnesses routr starts from that shell inherit it too (what Codex does with it beside its own sign-in is not
-measured). To keep a key to routr, save it with `routr key set openai` and leave the variable unset.
+and the harnesses routr starts from that shell inherit it too (Codex 0.169 still reported its ChatGPT sign-in with
+the variable set; whether it changes what Codex bills is not measured). To keep a key to routr, save it with `routr key set openai` and leave the variable unset.
 
 With Ollama, the first brief after the model was unloaded waits for it to load (5 to 17 s for Clef Flash on an M4
 Max, about 5 s on an NVIDIA laptop GPU); routr keeps it loaded for 15 minutes after each brief. `the local model is

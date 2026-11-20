@@ -167,6 +167,8 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
     let raw;
     try { raw = await res.json(); }
     catch (e) { throw e instanceof SyntaxError && !signal.aborted ? new DecisionError(t, "invalid_response") : transportError(e); }
+    // Only a successful reply can decline: an HTTP error keeps its own status and retries above.
+    if (P.refused?.(raw, questions)) throw new DecisionError(t, "declined");
     const j = P.unwrap(raw);
     if (!j) throw new DecisionError(t, P.errorCode?.(raw) ?? "invalid_response");
     const answers = readAnswers(j?.answers, questions, t);

@@ -5,7 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- Choose OpenAI's GPT-6 Luna as a decision model: `routr setup --decision openai`, and `routr key set openai` saves its key. (#187)
+- Choose OpenAI's GPT-6 Luna as a decision model, metered on your OpenAI account: `routr setup --decision openai`, and `routr key set openai` saves its key. A question it refuses moves on to your next decision model. (#187)
 
 ## v0.17.0 — 2026-11-20
 

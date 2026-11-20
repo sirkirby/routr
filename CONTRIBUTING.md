@@ -39,8 +39,8 @@ A model is offered only with a profile measured on the saved items behind the ev
 from 0.5 to 0.8 at which its level, when sure, is right at least as often as Jev's at 0.8) and the record its torn note
 quotes (right, low and high on the 36 real tasks). Each is pinned as exactly as its provider allows: Jev by version,
 never an alias; an Ollama model by an explicit tag and the digest that was measured (`latest` is a different build per
-platform). Cloudflare's names are not versioned, which `docs/evidence.md` says, so its models are re-run through the
-gate rather than pinned.
+platform). Cloudflare's and OpenAI's names are not versioned (OpenAI documents only `gpt-6-luna`), which
+`docs/evidence.md` says, so their models are re-run through the gate rather than pinned.
 
 ### Moving to a new model or version
 
@@ -56,7 +56,7 @@ newest one that does at least as well.
    rise at all. The other facts' decisiveness and stability are reported, not gated. Beside it, the maintainers'
    workbench scores both versions against verified outcomes on real tasks from their own ledger, with tolerances set
    from a same-version run. The gate takes any provider:
-   `--candidate jev-preview`, `--candidate cloudflare:clef`, `--candidate ollama:<tag>`. For a new Jev version, a
+   `--candidate jev-preview`, `--candidate cloudflare:clef`, `--candidate openai:gpt-6-luna`, `--candidate ollama:<tag>`. For a new Jev version, a
    candidate that does worse on a gated measure is not taken until the question is re-worded or the regression is
    understood. A new model on another provider is offered beside Jev, not instead of it, with its own column in
    `docs/evidence.md` and its profile measured from the same run.
