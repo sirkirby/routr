@@ -5,7 +5,7 @@
 // hc runs routr's own runner in the terminal, never the harness: core gives a terminal its server's environment, not
 // its caller's (measured 2026-11-03), so the runner is what gives the harness the environment launch decided on.
 import { warning } from "./warnings.mjs";
-import { launchCarriers, currentLaunch, inputNeeded } from "./traces.mjs";
+import { delivered, handingOver, launchCarriers, currentLaunch, inputNeeded } from "./traces.mjs";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import { existsSync, writeFileSync } from "node:fs";
@@ -166,6 +166,8 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   step("reserve", true, `Made ${dir} for ${o.name}`);
   // The space label is core's and the program routr's own: the log says what they are.
   out.ran.push(displayCommand(["hc", "run", "--bg", "--json", "--name", o.name, "--cwd", out.cwd, "--outlive-parent", "--no-notify", ...(lead.space ? ["--label", "herdr.space=<lead's space>", "--label", `herdr.tab=routr-${id}`] : []), "--label", `${WORKER_LABEL}=${id}`, "--", "routr", "workers", "--run", dir, "--id", id]));
+  // The task goes with the terminal's program: handing it over is opening the terminal.
+  handingOver();
   const opened = await openTerminal({ name: o.name, id, cwd: out.cwd, lead, argv: program, labels: [`${WORKER_LABEL}=${id}`], trying: (name) => save({ terminal_name: name }), run: hc, pause: sleep });
   if (opened.code === "refused" || opened.code === "not_found") { await unreserve(); throw new Error(`hc refused to start the worker's terminal (${opened.code}); nothing was started, and what launch made is gone`); }
   // No answer, or one it cannot read: a terminal may be there, so what launch made stays for cleanup to finish.
@@ -356,10 +358,12 @@ export const terminal = {
     }
     const file = join(me.dir, `${MESSAGE_FILE}-${randomUUID().replace(/-/g, "")}.md`);
     writeFileSync(file, message, { flag: "wx", mode: 0o600 });
+    handingOver();
     const reply = await sendToTerminal(checked.target, nextMessage(file), hc, word);
     // Bookkeeping for wait: a write that fails never turns a delivered message into a failed send.
     if (reply.code === "handed_to_harness" && reply.turn != null) try { writeJsonAtomic(join(me.dir, SEND_FILE), { turn: reply.turn }, { mkdir: false, mode: 0o600 }); } catch {}
     const sent = sentAs(w.name, w.kind, reply);
+    if (sent.ok) delivered(w);
     if (reply.code === "refused") sent.next.push(readStep(w), doNext("Read the question and answer it only when it is yours to answer.", templateCommand(["hc", "keys", checked.target, "<keys>"])));
     return sent;
   },

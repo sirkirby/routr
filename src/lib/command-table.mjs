@@ -13,7 +13,8 @@
 //          finishes first (a usage read it is stopping: on Windows its taskkill must end, or the reader's tree is left
 //          running); a refusal exits 0. "ok": prints run's answer and exits 0 when it is ok, else 1. "own": run prints,
 //          and returns its exit code (null: keep running, as the holder does).
-//   trace: false, or { state, lead, links }: a span `routr <name>`, with `routr.<name>.state`, the lead's session id,
+//   trace: false, or { state, lead, links }: a span `routr <name>`, with `routr.<name>.state`, the lead's session id as
+//          its gen_ai.conversation.id (from a `--lead-session` flag only where the entry has one),
 //          links to a worker's launch. `untraced(line)`: routr's own forms of the command, as typed, never traced.
 //   autoUpdate: start the detached daily updater (at most once a day) before the command runs.
 //   decisionModel: "assessment" or "check": its answer carries that decision-model reading, or an `unavailable` naming
@@ -160,7 +161,7 @@ export const COMMANDS = {
       { name: "--task", arg: "<text>", description: "the message (mutually exclusive with --task-file)", required: false },
       { name: "--task-file", arg: "<path>", description: "file containing the message (mutually exclusive with --task)", required: false },
     ],
-    reach: "first", exit: "ok", trace: { state: true, lead: false, links: true }, autoUpdate: false, decisionModel: null, advice: false,
+    reach: "first", exit: "ok", trace: { state: true, lead: true, links: true }, autoUpdate: false, decisionModel: null, advice: false,
     run: async ({ args, settings }) => (await import("./workers.mjs")).sendCommand(args, settings),
   },
   workers: {

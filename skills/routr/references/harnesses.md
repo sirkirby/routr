@@ -171,7 +171,7 @@ installed binary strings [bin]; no session was started. Fixture tests verify rou
 | Antigravity | Process environment | No reader found: its own telemetry is not joined | [bin] agy 1.4.7 |
 | Kiro | Environment; ACP reserved `_meta.traceparent`, `_meta.tracestate`, `_meta.baggage` on `session/prompt` for the turn, on `session/new`/`session/load` for the process | No reader in environment or ACP found: its own telemetry is not joined. ACP reserves these keys; session/new acceptance is measured below, session/prompt acceptance is unmeasured | [bin] kiro-cli 2.34.0; [doc] kiro.dev/docs/cli/acp; agentclientprotocol.com/protocol/extensibility |
 
-No researched harness reads `BAGGAGE`. Pane workers have no turn spans and get launch context in a new pane's
+No researched harness reads `BAGGAGE`. Pane workers have no turn spans (only an `invoke_agent` span for the task they took) and get launch context in a new pane's
 environment; neither Claude nor Codex reads it in interactive mode. Export off or a persisted unsampled launch
 decision preserves saved carrier values unchanged. An off launch saves no launch context, but a valid saved
 parent retains its sampling decision after opt-in: unsampled stays silent; sampled parents the turns directly.

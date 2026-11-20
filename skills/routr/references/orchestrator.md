@@ -558,7 +558,8 @@ routr opens sets all three names, empty for a carrier it does not pass, excludin
 
 On `dispatch`, `subagent` and `launch`, pass `--lead-session <your session id>` when routr cannot read your id from
 the harness environment and you know it. Never invent an id. This joins the lead to its launches in the person's
-OpenTelemetry receiver; it is separate from a worker's own conversation id. Inline advice consumes the flag and
+OpenTelemetry receiver as each command span's `gen_ai.conversation.id`; a worker's own conversation id goes only on
+the `invoke_agent` span for what it was handed. Inline advice consumes the flag and
 next word only when that word is a valid id; otherwise they remain in the brief with a flag-like note. Launch and
 file-based advice ignore malformed values with a fixed warning. A dry-run launch may queue its planned span while
 export is on, but creates no index entry.

@@ -2,7 +2,7 @@
 // The whole lifecycle of one launch into a pane: its shell, its split or worktree, adopting an agent already there, the
 // start and the prompt; what a launch that stopped part way leaves, and what to do about it.
 import { warning } from "./warnings.mjs";
-import { inputNeeded, launchCarriers } from "./traces.mjs";
+import { handingOver, inputNeeded, launchCarriers } from "./traces.mjs";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { configOf } from "./config.mjs";
@@ -389,7 +389,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       const submitMs = Math.min(30000, Math.floor(budget / 2));
       const a = promptArgs(out.pane, submitMs);
       logCommand(out.ran, promptForLog(a));
-      promptAttempted = true;
+      promptAttempted = true; handingOver();
       let r = await safeRun(a, Math.min(remaining(), submitMs + Math.min(1000, Math.floor((budget - submitMs) / 2))));
       if (!r.ok && r.code === "herdr_unreachable" && r.data?.error?.code !== "timeout") throw processError(r);
       const quiet = !r.ok && ["agent_prompt_stalled", "timeout"].includes(r.data?.error?.code);

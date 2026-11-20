@@ -85,15 +85,35 @@ export function adviceForLaunch(id) { const c = context.getStore(); if (c?.comma
 async function paneFacts(pane, run) {
   try { const r = await callHerdr(run, ["pane", "get", pane], 1000); return r.ok ? r.data?.result?.pane : null; } catch { return null; }
 }
-function conversation(facts) {
-  const id = facts?.agent_session?.kind === "id" ? sessionId(facts.agent_session.value) : null;
-  const c = context.getStore(); if (c && id) put(c.span, { "gen_ai.conversation.id": id });
+// A pane's conversation, as herdr's agent_session hook last reported it: it can lag or be null, and routr never waits.
+const paneConversation = (facts) => (facts?.agent_session?.kind === "id" ? sessionId(facts.agent_session.value) : null);
+// What a worker invocation says of its worker: a headless turn (workerTurn) and an instruction handed to a pane or
+// terminal worker (invocation) alike.
+const invoked = (w, backend, launchId) => ({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": HARNESSES[w.kind].otelProvider, "gen_ai.agent.name": w.name,
+  "routr.kind": pick(w.kind, subscriptions), "routr.backend": backend, "routr.launch.id": launchId, "routr.model": modelName(w.model), "routr.effort": pick(w.effort, EFFORTS) });
+const invocable = (w) => Object.hasOwn(HARNESSES, w?.kind) && WORKER_NAME.test(w?.name ?? "");
+// An instruction routr hands a pane or terminal worker (its task at launch, a message at send) is the command's child
+// `invoke_agent {name}`, CLIENT as a headless turn is: it starts when routr hands the instruction over (handingOver) and
+// ends with the command's own work, recorded only when the worker took it. A headless worker's holder records its own
+// turns instead. The command span carries the lead's conversation; this child carries the worker's, only when known (a
+// pane's herdr agent_session; a terminal worker's is never known), and always the worker's repository and branch, which
+// a receiver can join to that harness's session.
+export function handingOver() { try { const c = context.getStore(); if (c?.span) c.handover ??= spanClock(); } catch {} }
+function invocation(c, w, { backend, launchId, identity, conversation = null }) {
+  if (!c?.span || !c.handover || !invocable(w)) return;
+  const span = started({ name: `invoke_agent ${w.name}`, kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, attributes: {} }, c.handover);
+  put(span, identity); put(span, { ...invoked(w, backend, launchId), "gen_ai.conversation.id": conversation });
+  span.endTimeUnixNano = spanNow(span); c.spans.push(span); c.handover = null;
+}
+// A message a terminal worker took (send): its worker record names its launch, folder, harness and model.
+export function delivered(w) {
+  try { const c = context.getStore(); if (c?.span && c.handover) invocation(c, w, { backend: w.backend, launchId: launchContext(w.launch)?.launch_id, identity: traceIdentity(w.cwd).attributes }); } catch {}
 }
 export async function cleanupLink(o, run) {
   try {
     const c = context.getStore(); if (!c?.span || c.command !== "cleanup") return;
     if (o.pane && c.env.HERDR_ENV === "1") {
-      const facts = await paneFacts(o.pane, run); conversation(facts);
+      const facts = await paneFacts(o.pane, run);
       if (typeof facts?.terminal_id === "string") link(c.index.match({ pane_id: o.pane, terminal_id: facts.terminal_id }, { activeOnly: true }));
     } else if (o.path) { const path_hash = pathHash(o.path); if (path_hash) link(c.index.match({ path_hash }, { activeOnly: true })); }
     else if (o.worktree) {
@@ -105,7 +125,10 @@ export async function cleanupLink(o, run) {
 export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
   const c = context.getStore(); if (!c?.span || c.command !== "launch") return;
   const identity = traceIdentity(r.cwd), facts = r.pane && r.state !== "planned" ? await paneFacts(r.pane, run) : null;
-  put(c.span, identity.attributes); conversation(facts);
+  put(c.span, identity.attributes);
+  // The task, as the worker took it. The id herdr reports goes on that child, never on the launch span: the launch runs
+  // in the lead's conversation.
+  if (r.state === "prompted" && ["pane", "terminal"].includes(backend)) invocation(c, r, { backend, launchId: c.launchId, identity: identity.attributes, conversation: paneConversation(facts) });
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
   // A recovery rerun is its own launch, with its own id (launch's, as its history record has it whether or not anything is
   // exported), linked to the launch it finishes. Whether it takes the pane over, and whether this launch is indexed,
@@ -231,13 +254,12 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
   try {
     const launch = launchContext(worker.launch); inherited = parseTraceparent(saved.TRACEPARENT);
     session = otelSession(loadConfig(otel.configPath).config, env, otel);
-    if (session.on && (launch || !Object.hasOwn(worker, "launch")) && inherited?.sampled !== false && Object.hasOwn(HARNESSES, worker.kind) && WORKER_NAME.test(worker.name)) {
+    if (session.on && (launch || !Object.hasOwn(worker, "launch")) && inherited?.sampled !== false && invocable(worker)) {
       const parent = launch ?? inherited;
       span = started({ name: `invoke_agent ${worker.name}`, kind: 3, traceId: parent?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(parent ? { parentSpanId: parent.spanId } : {}),
         flags: 1, attributes: {} });
       put(span, identity ? identity() : traceIdentity(worker.cwd).attributes);
-      put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": HARNESSES[worker.kind].otelProvider, "gen_ai.agent.name": worker.name,
-        "routr.kind": pick(worker.kind, subscriptions), "routr.backend": "headless", "routr.launch.id": launch?.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
+      put(span, { ...invoked(worker, "headless", launch?.launch_id), "routr.turn": number });
     }
   } catch {} // Missing context, malformed state or optional observation cannot change a turn.
   let ended = false;
@@ -279,7 +301,8 @@ export function commandTrace(command, setup = {}, run) {
     if (session.on && inherited?.sampled !== false) {
       span = started({ name: `routr ${command}`, kind: 1, traceId: inherited?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"),
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
-      const id = leadSession(env, lead); if (id && traceOf(command).lead) put(span, { "routr.lead.session_id": id });
+      // The command runs in the lead's conversation; a worker's is on the invocation it starts (invocation).
+      const id = leadSession(env, lead); if (id && traceOf(command).lead) put(span, { "gen_ai.conversation.id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
       // A launch's id (launch-identity.mjs). The CLI opens a launch's trace before launch runs (routr.mjs), so the id is
       // made here, and launch takes it (openLaunchId): one id in its answer, history, worker record, span and index.

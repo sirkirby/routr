@@ -88,7 +88,7 @@ if (traced) {
   try {
     const tracing = await import("./lib/traces.mjs"), configPath = value("--config"), { takeLeadSession } = await import("./lib/trace-context.mjs"); traceOutput = tracing.traceOutput;
     invoke = () => tracing.commandTrace(traced, () => ({ config: configAt(configPath).config, otel: { configPath },
-      lead: takeLeadSession(argv).lead, cwd: value("--cwd"), explicitLevel: argv.includes("--level") }), main);
+      lead: way.entry.flags?.some((f) => f.name === "--lead-session") ? takeLeadSession(argv).lead : null, cwd: value("--cwd"), explicitLevel: argv.includes("--level") }), main);
   } catch {} // Optional tracing must not prevent a command from starting.
 }
 const code = await invoke();
