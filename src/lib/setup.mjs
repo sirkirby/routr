@@ -305,7 +305,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   if (ui && !flagged) {
     // The decision model first, and its key: nothing routr advises works without one.
     if (!r.decision.some((k) => k.works)) {
-      ui.note("Decision model", ["routr asks a small decision model about each piece of work. TypeSafe's Jev needs a TypeSafe key;", "Cloudflare's Clef runs on your Cloudflare account, or free on this machine through Ollama."]);
+      ui.note("Decision model", ["routr asks a small decision model about each piece of work. TypeSafe's Jev needs a TypeSafe key;", "Cloudflare's Clef runs on your Cloudflare account, or free on this machine through Ollama; OpenAI's GPT-6 Luna needs an OpenAI key."]);
       const d = await askDecision(ui, decisionTargets(config ? loadConfig(path).config : null, {}));
       if (d === CANCEL) { return stopped(); }
       if (Array.isArray(d)) { decision = d; for (const entry of d) await keyFor(entry); }

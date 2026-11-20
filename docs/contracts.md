@@ -80,7 +80,7 @@ Each hosted attempt, including retries, gets at most 8 seconds of the remaining 
 are reported as `timeout` without a request. The first answer supplies the reading and its own measured profile
 (`sure_at` and torn record); the list never combines readings.
 
-Failures that move on: `timeout`, `unreachable`, `provider_error`, `no_key`, `model_unsupported`, and the existing
+Failures that move on: `timeout`, `unreachable`, `provider_error`, `no_key`, `model_unsupported`, `declined` (the model refused a question), and the existing
 `daily_allowance` and `model_missing` cases. `key_refused` and `invalid_response` stop: the person must fix a refused
 key, and an unreadable reply is not a reason to ask someone else. `secrets_unreadable` and `internal_error` also stop.
 When none answers, advice uses `fallback_level` as before; check asks the lead to judge the report.

@@ -1,4 +1,4 @@
-// `routr key set [typesafe|cloudflare]`: store what a decision provider needs without it passing through an agent's
+// `routr key set [typesafe|cloudflare|openai]`: store what a decision provider needs without it passing through an agent's
 // transcript. The USER runs this in their own terminal; a secret is typed with no echo (or piped in) and merged into
 // ~/.config/routr/env, owner-only, beside any other provider's. Ollama needs nothing: it runs on this machine.
 import { decisionTarget, decisionTargets, decisionCommand, isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";

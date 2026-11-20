@@ -470,7 +470,8 @@ test("doctor names the decision model, its provider, and the fix that provider n
   const r = (key) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", skill: true }, skill: [], harnesses: {}, decision: [key],
     config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] }, auto_update: { on: false, why_off: "running from source" }, next_steps: [] });
   expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-1.14.0", model: "jev-1.14.0", works: true, ms: 271, measured: true }))).toContain("ok decision model TypeSafe: jev-1.14.0 answers (271 ms)");
-  expect(render(r({ provider: "cloudflare", label: "Cloudflare Workers AI", asked: "clef", model: "clef", works: true, ms: 577, measured: true, unversioned: true }))).toContain("Cloudflare does not version this name");
+  expect(render(r({ provider: "cloudflare", label: "Cloudflare Workers AI", asked: "clef", model: "clef", works: true, ms: 577, measured: true, unversioned: true }))).toContain("Cloudflare Workers AI does not version this name");
+  expect(render(r({ provider: "openai", label: "OpenAI", asked: "gpt-6-luna", model: "gpt-6-luna", works: true, ms: 230, measured: true, unversioned: true }))).toContain("OpenAI does not version this name");
   expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-preview", model: "jev-1.15.0", works: true, ms: 300, measured: false }))).toContain("jev-1.15.0, asked as jev-preview answers (300 ms) · not a model routr has measured");
   // Each provider's own fix, first among the next steps.
   expect(nextSteps(r({ provider: "cloudflare", works: false, found: false, error: "no token" }))[0]).toContain("Add your Cloudflare Workers AI key. Create an API token with Workers AI Read (Account > Workers AI > Read)");

@@ -592,7 +592,7 @@ which can quote its brief ("Headless workers", above), and a terminal worker's p
 
 The list keeps hosted choices in order and tries local Ollama choices last, because they may need to load. Hosted
 attempts have an 8-second cut inside one overall deadline: 10 seconds for hosted-only lists, 30 seconds with local.
-A timeout, unreachable provider, provider error, daily allowance, absent key, missing local model or unsupported
+A timeout, unreachable provider, provider error, daily allowance, declined question, absent key, missing local model or unsupported
 local runtime moves on. A refused key, unreadable reply, unreadable secrets file or internal error stops. Only when
 none answers does advice use the user's fallback level. Each answering model keeps its own measured profile.
 Doctor tests every entry independently and says which are ready; storing a provider key changes no decision list.

@@ -98,12 +98,17 @@ const inRange = (x, max = 1) => Number.isFinite(x) && x >= 0 && x <= max;
 
 // Project as well as validate: unused provider fields can carry the brief too. Question keys and choices come from
 // the request, never the reply; optional confidence/spreads remain optional (some providers omit them).
-function readAnswers(answers, questions, target) {
+// A provider that can refuse single questions (`refusals`) declines only when the rest of the reply is valid and names
+// only questions routr asked: a refusal beside a malformed answer is an unreadable reply, which stops the list.
+function readAnswers(answers, questions, target, { refusals = false } = {}) {
   const invalid = () => { throw new DecisionError(target, "invalid_response"); };
   if (!object(answers)) invalid();
+  if (refusals && Object.keys(answers).some((k) => !Object.hasOwn(questions, k))) invalid();
   const out = {};
+  let declined = false;
   for (const [key, q] of Object.entries(questions)) {
     const a = answers[key];
+    if (refusals && object(a) && a.type === "refusal") { declined = true; continue; }
     if (!object(a) || (a.type !== undefined && a.type !== q.type)) invalid();
     const options = q.type === "choice" ? Object.keys(q.criteria) : q.type === "score" ? q.criteria.map((_, i) => String(i)) : null;
     const field = q.type === "choice" ? "choice" : q.type === "score" ? "score" : "noul";
@@ -118,6 +123,7 @@ function readAnswers(answers, questions, target) {
     }
     out[key] = clean;
   }
+  if (declined) throw new DecisionError(target, "declined");
   return out;
 }
 
@@ -129,7 +135,7 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
   const t = target ?? decisionTarget(config, env), P = PROVIDERS[t.provider];
   const secrets = secretsFor(t.provider, { env, file, target: t });
   let request, payload;
-  try { request = P.request(t.model, secrets, env); payload = JSON.stringify({ ...request.body, state, model: t.model, questions }); }
+  try { request = P.request(t.model, secrets, env); payload = JSON.stringify(P.wrap({ ...request.body, state, model: t.model, questions })); }
   catch { throw new DecisionError(t, "internal_error"); }
   const { url, headers } = request;
   const budget = deadlineMs ?? P.deadlineMs, stopAt = clock.now() + budget;
@@ -152,7 +158,8 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
     }
     const latencyMs = clock.now() - t0, wait = 500 * 2 ** attempt;
     if (!res.ok) {
-      // Local bodies may select a known pattern. Hosted envelopes supply only numeric error codes, never wording.
+      // Local bodies may select a known pattern. Hosted replies supply only a numeric error code or an answer's type,
+      // never wording.
       let code;
       if (P.failure) { try { code = P.failure(res.status, await res.text()); } catch (e) { throw transportError(e); } }
       if (P.errorCode) {
@@ -166,9 +173,12 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
     let raw;
     try { raw = await res.json(); }
     catch (e) { throw e instanceof SyntaxError && !signal.aborted ? new DecisionError(t, "invalid_response") : transportError(e); }
-    const j = P.unwrap(raw);
+    // A provider's unwrap reads outside text: whatever it throws on is an unreadable reply, never an unclassified error.
+    // Only a successful reply can decline (in readAnswers): an HTTP error keeps its own status and retries above.
+    let j;
+    try { j = P.unwrap(raw); } catch { j = null; }
     if (!j) throw new DecisionError(t, P.errorCode?.(raw) ?? "invalid_response");
-    const answers = readAnswers(j?.answers, questions, t);
+    const answers = readAnswers(j?.answers, questions, t, { refusals: P.refusals });
     const usage = object(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([k, v]) => [...TOKEN_USAGE, "total_tokens"].includes(k) && Number.isSafeInteger(v) && v >= 0)) : undefined;
     const model = P.identity(j.model) ? j.model : t.model;
     // A validated identity can still be an unmeasured version. Keep the fallback profile for reading its answers,
@@ -195,7 +205,7 @@ export async function ask(state, questions, opts = {}) {
     } catch (e) {
       const error = e instanceof DecisionError ? e : new DecisionError(target, "internal_error");
       errors.push(error);
-      if (!["timeout", "unreachable", "provider_error", "daily_allowance", "no_key", "model_missing", "model_unsupported"].includes(error.code)) break;
+      if (!["timeout", "unreachable", "provider_error", "daily_allowance", "declined", "no_key", "model_missing", "model_unsupported"].includes(error.code)) break;
     }
   }
   throw new DecisionListError(errors);

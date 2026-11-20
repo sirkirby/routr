@@ -311,7 +311,7 @@ export function render(r, { platform = process.platform } = {}) {
   }
   for (const k of r.decision) {
     const asked = k.asked && k.model !== k.asked ? `, asked as ${k.asked}` : "";
-    const measured = k.measured === false ? " · not a model routr has measured (ROUTR_DECISION_MODEL)" : k.unversioned ? " · Cloudflare does not version this name: docs/evidence.md says what was measured" : "";
+    const measured = k.measured === false ? " · not a model routr has measured (ROUTR_DECISION_MODEL)" : k.unversioned ? ` · ${k.label} does not version this name: docs/evidence.md says what was measured` : "";
     line(k.works ? "ok" : "need", `decision model ${k.label}: ${k.works ? `${k.model}${asked} answers (${k.ms} ms)${measured}${k.note ? ` · ${k.note}` : ""}`
       : k.local ? `${k.asked} does not answer: ${k.error}` : `${k.asked}: ${k.found ? "key found but the test call failed" : "key missing"}: ${k.error}`}`);
   }

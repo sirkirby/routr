@@ -293,7 +293,7 @@ All command spans are INTERNAL (kind 1); decision calls and worker invocations a
 unset. Exported spans carry no `traceState`; inherited `TRACESTATE` is forwarded only to workers. A final failure
 sets ERROR (code 2) and a classified `error.type`; retries or an earlier failed provider
 recovered by a backup do not mark the recovered operation as failed. No exception or provider wording is exported.
-Decision providers are `typesafe`, `cloudflare` and `ollama`, describing the platform routr contacted, not the
+Decision providers are `typesafe`, `cloudflare`, `openai` and `ollama`, describing the platform routr contacted, not the
 model's author. Worker invocation spans use Claude Code `anthropic`, Codex `openai`, Cursor `cursor`,
 Antigravity `gcp.gen_ai` and Kiro `kiro` as routr's best knowledge of the platform, rather than the model's author.
 CLIENT is routr's reading of “invocation over a remote service” for a separate local process speaking the harness's
@@ -412,7 +412,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.check.out_of_scope` | `double` | Probability, 0–1, for the fixed `out_of_scope` question. |
 | `routr.check.flags` | `string[]` | Question names `states_verification`, `covers_brief`, `admits_gaps`, `symptom_patch`, `out_of_scope` when flagged; also `verdict_partial`, `verdict_blocked`, `verdict_unstated`. |
 | `gen_ai.operation.name` | `string` | `classify`, routr’s custom System One operation, or `invoke_agent` for a headless turn or an instruction a pane or terminal worker took. |
-| `gen_ai.provider.name` | `string` | Decision platform: `typesafe`, `cloudflare`, `ollama`; worker platform: `anthropic`, `openai`, `cursor`, `gcp.gen_ai`, `kiro`; unknown becomes `other`. |
+| `gen_ai.provider.name` | `string` | Decision platform: `typesafe`, `cloudflare`, `openai`, `ollama`; worker platform: `anthropic`, `openai`, `cursor`, `gcp.gen_ai`, `kiro`; unknown becomes `other`. |
 | `gen_ai.request.model` | `string` | Requested decision model from the provider registry, or the shared worker-model shape; invalid becomes `other`. |
 | `gen_ai.response.model` | `string` | Model explicitly named by the provider reply, checked against the registry or shared model shape; absent unless observed, invalid becomes `other`. |
 | `gen_ai.usage.input_tokens` | `int` | Observed nonnegative integer input token count. |
@@ -445,10 +445,10 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 ### Span error codes
 
 <!-- span-errors -->
-`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `command_shadowed`, `private_folder`, `source_missing`, `not_read_yet`, `cmd_path`, `unreadable`, `refused`, `failed`, `not_started`, `no_finish`, `stopped`, `_OTHER`
+`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `declined`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `command_shadowed`, `private_folder`, `source_missing`, `not_read_yet`, `cmd_path`, `unreadable`, `refused`, `failed`, `not_started`, `no_finish`, `stopped`, `_OTHER`
 <!-- /span-errors -->
 
-Decision codes describe missing/refused keys, unreadable secrets, missing/unsupported models, allowance, timeout,
+Decision codes describe missing/refused keys, unreadable secrets, missing/unsupported models, allowance, a declined question, timeout,
 reachability, provider status, invalid response and internal errors. Usage codes describe missing/unreadable
 sources, no response, a user command shadowing usage, private-folder and cmd-path failures. `unreadable` covers required files, `refused` a refused
 operation, `failed` a classified command or turn failure, `not_started` a harness that did not start,

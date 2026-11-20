@@ -2,7 +2,7 @@
 // routr: quick, calibrated advice for an agent that is about to hand out work. Every command is one entry of the command
 // table (src/lib/command-table.mjs): its flags and help text (`routr --help` prints them), how a line reaches it, how it
 // exits, and whether it is traced and keeps routr up to date. This file walks it.
-// A System One decision model (TypeSafe's Jev, or Cloudflare's Clef: providers.mjs) judges the WORK in well under a second; routr adds usage and ranks by arithmetic (docs/ranking.md);
+// A System One decision model (TypeSafe's Jev, Cloudflare's Clef, or OpenAI's GPT-6 Luna: providers.mjs) judges the WORK in well under a second; routr adds usage and ranks by arithmetic (docs/ranking.md);
 // the agent that asked makes the decision. Never names a model.
 // Advice writes nothing of the user's and fails open; launch reports failures as JSON and exits nonzero.
 // Each command's code is loaded only when that command runs: `statusline` runs on every Claude Code turn, so it and the

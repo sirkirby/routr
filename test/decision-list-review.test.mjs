@@ -99,7 +99,7 @@ test("setup leaves equivalent object, omitted and list settings byte-for-byte; f
 });
 
 test("a warning's concrete setup command repairs dropped entries using the effective old list", () => {
-  for (const decision of [[{ provider: "openai" }], ["typesafe"], [{ provider: "cloudflare", model: "nope" }], [ts, ts]]) {
+  for (const decision of [[{ provider: "nope" }], ["typesafe"], [{ provider: "cloudflare", model: "nope" }], [ts, ts]]) {
     const m = machine(decision), before = readFileSync(m.config, "utf8");
     const advice = m.run(["subagent", "--task-file", m.brief]).json();
     const fix = advice.warnings[0].split("Set the ordered list with ")[1];

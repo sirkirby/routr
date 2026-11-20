@@ -28,7 +28,7 @@ export const SCRIPT = join(import.meta.dir, "../src/routr.mjs");
 // (CI sets CI and GITHUB_ACTIONS), and a test that wants one passes it in `over`.
 const QUIET = ["CI", "GITHUB_ACTIONS", "DO_NOT_TRACK", "ROUTR_TELEMETRY"];
 export const cliEnv = (home, over = {}) => {
-  const given = { HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "", OLLAMA_HOST: "", ROUTR_DECISION_MODEL: "", ...over };
+  const given = { HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", OPENAI_API_KEY: "", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "", OLLAMA_HOST: "", ROUTR_DECISION_MODEL: "", ...over };
   // A plain env object can contain both Path and PATH, unlike Windows' process.env. Drop inherited aliases before
   // overriding, so child processes and routr's case-insensitive lookup both see the isolated fake-tool PATH.
   const replaced = new Set([...QUIET, ...Object.keys(given)].map((k) => k.toLowerCase()));

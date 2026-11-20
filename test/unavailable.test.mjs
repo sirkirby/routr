@@ -87,7 +87,7 @@ test("launch rebuilds every saved recovery action and HTTP status without trusti
   const args = ["--subscription", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", file, "--dry-run"];
   for (const [provider, code, status] of [
     ["typesafe", "no_key"], ["typesafe", "key_refused"], ["typesafe", "secrets_unreadable"],
-    ["cloudflare", "daily_allowance"], ["cloudflare", "provider_error", 429], ["typesafe", "provider_error", 500],
+    ["cloudflare", "daily_allowance"], ["openai", "declined"], ["cloudflare", "provider_error", 429], ["typesafe", "provider_error", 500],
     ["ollama", "model_missing"], ["ollama", "model_unsupported"], ["ollama", "unreachable"],
   ]) {
     const target = decisionTarget({ decision: { provider } }, {}), error = new DecisionError(target, code, status);
@@ -108,7 +108,7 @@ test("Antigravity window names come from known keys instead of outside ids", asy
 test("every classified decision failure has one output contract, independent of the asking command", async () => {
   const dir = scratch("unavailable"), brief = join(dir, "brief"), report = join(dir, "report");
   writeFileSync(brief, BRIEF_MARKER); writeFileSync(report, marker);
-  for (const provider of Object.keys(PROVIDERS)) for (const code of DECISION_CODES.filter((c) => c !== "attempt_unknown" && (provider === "cloudflare" || c !== "daily_allowance"))) {
+  for (const provider of Object.keys(PROVIDERS)) for (const code of DECISION_CODES.filter((c) => c !== "attempt_unknown" && (provider === "cloudflare" || c !== "daily_allowance") && (provider === "openai" || c !== "declined"))) {
     const config = cfg({ decision: { provider } }), target = decisionTarget(config, {});
     const askFn = async () => { throw new DecisionError(target, code); };
     const missing = { part: "decision model", provider, model: target.model, code, why: new DecisionError(target, code).message, ...(code === "provider_error" ? { status: 0 } : {}) };

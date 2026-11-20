@@ -1,5 +1,5 @@
 // A decision model's answers + user preferences → a FACT SHEET and advice for the agent that asked. Pure: no I/O.
-// System One feeds System Two: the decision model (Jev, or Clef: providers.mjs) reads what the brief says, fast and
+// System One feeds System Two: the decision model (Jev, Clef, or GPT-6 Luna: providers.mjs) reads what the brief says, fast and
 // calibrated; the agent, who knows the codebase and the purpose of the work, decides how much intelligence and
 // reasoning to buy. Nothing here overrides either.
 import { FACTS, LEVELS } from "./questions.mjs";

@@ -39,13 +39,18 @@ installed since) and leaves the rest alone.
 The first answering model in an ordered list reads each brief and report. Ask for a first choice and optional backup, and say what each needs and how it did on
 routr's tests (`docs/evidence.md`, "Decision models"):
 
-- **TypeSafe's Jev** (the default): reads the level most accurately on routr's tests (81 to 82 of 104 right). Needs a
+- **TypeSafe's Jev** (the default): gets the most levels right on the 36 real tasks in routr's tests (28), and 81 to 83
+  of all 104. Needs a
   TypeSafe API key. They create one at https://console.typesafe.ai/keys
   (TypeSafe's quick start shows the step: https://docs.typesafe.ai/introduction/quickstart).
 - **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
   organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
   Workers AI Read, the only permission routr needs (https://dash.cloudflare.com/profile/api-tokens), and their account ID. What Workers
   AI's free allowance covers is in `docs/evidence.md`. `cloudflare:clef-flash`, a smaller model, reads levels too low more often.
+- **OpenAI's GPT-6 Luna** (`openai`): metered on their OpenAI account. 85 of 104 levels right, but more of them too
+  low than Jev, fewer right on the real tasks (26 of 36), and more often wrong that a brief is self-contained. On a few
+  briefs it refuses a question every time: routr then asks the next model, or uses the fallback level, so give it a
+  backup. Needs an OpenAI API key (https://platform.openai.com/api-keys).
 - **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Ollama 0.40.1 or
   later, then the build `routr doctor` names: `clef-flash:9b-mxfp8` on Apple Silicon (12 GB, 5-7 s a brief on an M4
   Max), `clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA laptop GPU). It needs a GPU or Apple
@@ -62,7 +67,7 @@ a refused key or unreadable reply stops and is reported. If none answers, advice
 A key is stored by the user **themselves**, so it never passes through this conversation. Ask them to run, in their
 own terminal (in Claude Code they can type `! routr key set <provider>`):
 
-    routr key set typesafe        # or: routr key set cloudflare (it asks for the token, then the account ID)
+    routr key set typesafe        # or: routr key set cloudflare (it asks for the token, then the account ID), or routr key set openai
 
 It asks without showing a secret, saves it to `~/.config/routr/env` readable only by them, and makes one test call.
 Every provider, including Ollama, gets a command that appends it only when it is outside the list. Storing a key
@@ -71,8 +76,10 @@ says none is needed. Equivalent decision settings are kept as they are; duplicat
 Do not ask the user to paste a key to you, and never print or log it. Then run `routr doctor`: each decision model gets its own line saying whether it answers and why it does not.
 
 If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` (or `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID`) in their shell profile works too, and wins over the saved file. Do not put a key in a project
-`.env`: routr does not read one, and it risks being committed.
+`CLOUDFLARE_ACCOUNT_ID`) in their shell profile works too, and wins over the saved file. For OpenAI, use `routr key set
+openai`: an `OPENAI_API_KEY` in the shell also reaches every worker started from it, Codex included, and an exported
+one wins over the saved key, so leave it unset for routr. Do not put a key
+in a project `.env`: routr does not read one, and it risks being committed.
 Without a decision model routr still answers, but only with the fallback level.
 
 ## 3. Config
@@ -261,7 +268,7 @@ workers, offer to install them; the app and headless workers need neither:
     curl -fsSL https://herdr.dev/install.sh | sh                 # herdr itself (see herdr.dev for brew and Windows)
     npx skills add herdrdev/herdr --skill herdr -g               # herdr's agent skill (bunx works where there is no Node)
 
-Sizing subagents (`routr subagent`) needs neither. routr needs no TypeSafe or Cloudflare skill either: it calls the
+Sizing subagents (`routr subagent`) needs neither. routr needs no TypeSafe, Cloudflare or OpenAI skill either: it calls the
 decision model's API itself, and the only thing the user supplies is the key (or, for Ollama, the pulled model).
 
 ## 6. PATH

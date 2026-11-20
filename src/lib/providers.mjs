@@ -1,15 +1,16 @@
 // The System One providers routr can ask, and the decision models it has measured on each. One registry, the way
 // harnesses.mjs holds the harnesses: everything that differs between providers is here (where to send, how to sign the
-// request, how the answer comes back, what "ready" means), and systemone.mjs is the one client that uses it. All three
+// request, how the answer comes back, what "ready" means), and systemone.mjs is the one client that uses it. Three
 // speak TypeSafe's System One contract (state + typed questions → typed answers); what differs is the envelope around it
 // and how each computes `confidence`, which systemone.mjs normalizes, so advise.mjs reads every provider the same way.
+// OpenAI's Decisions API asks the same typed questions in its own shape, which its `wrap` and `unwrap` translate.
 //
 // A model is offered only with a PROFILE measured on routr's saved items (routr-lab's gate, CONTRIBUTING.md): its own
 // sure_at, and the numbers the "torn" note quotes. Profiles describe routr's instrument, never a worker model: nothing
 // here ranks or prices the models that do the work. Results per model: docs/evidence.md, "Decision models".
 //
-// Profiles, from the gate of 2026-10-11, and for jev-1.14.0 the gate of 2026-10-27 (three runs; docs/evidence.md,
-// "Moving the pin") (104 labelled briefs; 36 real runs from the maintainer's worker runs):
+// Profiles, from the gate of 2026-10-11, for jev-1.14.0 the gate of 2026-10-27 (three runs; docs/evidence.md,
+// "Moving the pin"), and for gpt-6-luna the gate of 2026-11-20 (three runs) (104 labelled briefs; 36 real runs from the maintainer's worker runs):
 // - sure_at: the lowest bar on 0.5..0.8 at which the model's level, when "sure", is right at least as often as Jev's at
 //   0.8 (39 of 44, 89%), with confidence normalized as systemone.mjs does.
 // - torn: the level as routr presents it, on the 36 real runs: right, one level low, one level high.
@@ -18,6 +19,14 @@ import { CONFIG_DIR } from "./state-files.mjs";
 import { join } from "node:path";
 
 export const SECRETS_FILE = (h) => join(CONFIG_DIR(h), "env");
+
+const isObject = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+// OpenAI's answers, when the reply's list is readable: every entry an object with a string name, no name twice.
+function openaiAnswers(j) {
+  const answers = isObject(j) ? j.answers : null;
+  if (!Array.isArray(answers) || !answers.every((a) => isObject(a) && typeof a.name === "string")) return null;
+  return new Set(answers.map((a) => a.name)).size === answers.length ? answers : null;
+}
 
 // Ollama's own variable for where its server listens (`ollama serve` reads it), read the way Ollama's own
 // client reads it (envconfig.Host): a bare host or host:port is http on 11434; a URL with a scheme and no port
@@ -54,6 +63,7 @@ export const PROVIDERS = {
     keysUrl: "https://console.typesafe.ai/keys",
     get: "Create an API key at https://console.typesafe.ai/keys, then run: routr key set typesafe",
     request: (model, s) => ({ url: "https://api.typesafe.ai/v1/systemone", headers: { Authorization: `Bearer ${s.TYPESAFE_API_KEY}` } }),
+    wrap: (b) => b,
     unwrap: (j) => j,
     identity: (model) => typeof model === "string" && /^jev-\d+\.\d+\.\d+$/.test(model),
     nativeConfidence: true, // TypeSafe's own definition: kept as sent (its probabilities arrive rounded to 0.01)
@@ -64,7 +74,7 @@ export const PROVIDERS = {
       // on verified outcomes it over-rated less and read fewer tasks as strong (docs/evidence.md, "Moving the pin").
       // sure_at 0.7: its sure levels were right 145 of 160 there, against 1.13's 115 of 129 at 0.8; 0.65 fell below.
       "jev-1.14.0": { sure_at: 0.7, torn: { right: 28, of: 36, low: 7, high: 1 },
-        hint: "needs a TypeSafe API key · reads the level most accurately on routr's tests: 81-82 of 104 right" },
+        hint: "needs a TypeSafe API key · the most levels right on the real tasks in routr's tests: 28 of 36" },
     },
   },
   cloudflare: {
@@ -80,6 +90,7 @@ export const PROVIDERS = {
     get: "Create an API token with Workers AI Read (Account > Workers AI > Read) at https://dash.cloudflare.com/profile/api-tokens, then run: routr key set cloudflare (it also asks for your account ID)",
     request: (model, s) => ({ url: `https://api.cloudflare.com/client/v4/accounts/${s.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/${model}`, headers: { Authorization: `Bearer ${s.CLOUDFLARE_API_TOKEN}` } }),
     // The REST API wraps the System One answer: { success, errors: [{ code, message }], messages, result }.
+    wrap: (b) => b,
     unwrap: (j) => {
       if (j?.success === false || !j?.result?.answers) return null;
       return j.result;
@@ -101,6 +112,48 @@ export const PROVIDERS = {
         hint: "your Cloudflare account, a smaller and faster Clef · 74 of 104 levels right, more often too low" },
     },
   },
+  openai: {
+    label: "OpenAI",
+    // OpenAI's own name, so a person who has it set needs nothing more.
+    secrets: [{ name: "OPENAI_API_KEY", label: "OpenAI API key", hidden: true }],
+    get: "Create an API key at https://platform.openai.com/api-keys, then run: routr key set openai",
+    request: (model, s) => ({ url: "https://api.openai.com/v1/decisions", headers: { Authorization: `Bearer ${s.OPENAI_API_KEY}` } }),
+    // One input, named questions. The state is JSON text. Every yes/no question is a predicate, with criteria appended
+    // to its instructions; score levels are labelled by number.
+    wrap: ({ state, model, questions }) => ({ model, input: JSON.stringify(state), questions: Object.entries(questions).map(([name, { type, instructions, criteria }]) =>
+      type === "score" ? { type, name, instructions, levels: criteria.map((description, i) => ({ label: String(i), description })) }
+        : type === "choice" ? { type, name, instructions, choices: Object.entries(criteria).map(([value, description]) => ({ value, description })) }
+          : { type: "predicate", name, instructions: criteria ? `${instructions}\n${Object.entries(criteria).map(([value, description]) => `${value}: ${description}`).join("\n")}` : instructions }) }),
+    // Named answers and spreads become System One's objects; readAnswers checks them against the request. A name or a
+    // spread value given twice is unreadable: keeping either would hide the other, unchecked. A refused question stays
+    // `{ type: "refusal" }`, and readAnswers declines only once every other answer is valid.
+    unwrap: (j) => {
+      const answers = openaiAnswers(j);
+      if (!answers) return null;
+      const spreads = answers.map((a) => a.probabilities).filter((p) => p !== undefined);
+      if (spreads.some((p) => !Array.isArray(p) || !p.every((x) => isObject(x) && ["string", "number", "boolean"].includes(typeof x.value))
+        || new Set(p.map((x) => String(x.value))).size !== p.length)) return null;
+      return { ...j, answers: Object.fromEntries(answers.map((a) => [a.name, a.type === "refusal" ? { type: "refusal" }
+        : a.type === "predicate" ? { type: "noul", noul: a.probability }
+          : { ...a, probabilities: a.probabilities && Object.fromEntries(a.probabilities.map((x) => [x.value, x.probability])) }])) };
+    },
+    // A successful reply (HTTP 200) may refuse some questions and answer the rest.
+    refusals: true,
+    identity: (model) => isModel("openai", model),
+    // OpenAI's `confidence` is TypeSafe's definition: within 0.015 of it on all 258 levels and 225 choices of the
+    // 2026-11-20 gate, so it is kept as sent.
+    nativeConfidence: true,
+    unversioned: true, // OpenAI documents only the name `gpt-6-luna`, with no dated version
+    deadlineMs: 10000,
+    models: {
+      // Gate 2026-11-20 (3 runs, identical): 85 of 104 levels right (11 low, 8 high), real runs 26 of 36. No bar from
+      // 0.5 to 0.8 makes its sure levels as reliable as Jev's (83-84% against 91%), so it keeps the highest. On 3 of 129
+      // briefs it refuses one yes/no question every time, and the list moves on. OpenAI offers this name only, with no
+      // dated version, so the gate is re-run on it.
+      "gpt-6-luna": { sure_at: 0.8, torn: { right: 26, of: 36, low: 9, high: 1 },
+        hint: "needs an OpenAI API key, metered · 85 of 104 levels right, more often too low" },
+    },
+  },
   ollama: {
     label: "Ollama (local)",
     secrets: [],
@@ -108,6 +161,7 @@ export const PROVIDERS = {
     // keep_alive is Ollama's own field: the model stays loaded between briefs, so only the first call of a session waits
     // for it to load (Clef Flash: 5 to 17 s on an M4 Max, measured).
     request: (model, s, env) => ({ url: `${ollamaHost(env)}/v1/systemone`, headers: {}, body: { keep_alive: "15m" } }),
+    wrap: (b) => b,
     unwrap: (j) => j,
     identity: (model) => isModel("ollama", model),
     host: ollamaHost,
@@ -239,6 +293,7 @@ const DECISION_MESSAGES = {
   provider_error: ({ http, action }) => `the provider returned HTTP ${http}. ${action}`,
   invalid_response: () => "the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.",
   daily_allowance: () => "the daily free allowance is used up. Wait for the daily reset or enable the Workers Paid plan in Cloudflare.",
+  declined: () => "the model declined to answer. If no backup decision model answered, add one with routr setup.",
   internal_error: () => "routr: an internal error stopped the decision check. Run routr doctor; if it persists, report it to routr.",
   attempt_unknown: () => "The saved fallback advice does not name the attempted decision model and its failure.",
 };
