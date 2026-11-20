@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.17.0 — 2026-11-20
+
+[Full notes](docs/releases/v0.17.0.md)
+
 - Every pane and terminal worker's `invoke_agent` span names that worker's own session as `gen_ai.conversation.id`, or says why it cannot in `routr.conversation.missing`; `routr workers` and a terminal launch show it as `session`. Claude Code and Cursor are given their id as they start; Codex and Antigravity terminal workers are found by their first message; Kiro has none. (#191)
 
 ## v0.16.0 — 2026-11-19
