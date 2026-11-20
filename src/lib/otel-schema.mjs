@@ -13,7 +13,7 @@ export const TRACE_ATTRIBUTES = Object.freeze({ "routr.question_set.version": "s
   ...Object.fromEntries(Object.keys(CHECKS).map((k) => [`routr.check.${k}`, "double"])), "routr.check.flags": "string[]",
   "gen_ai.operation.name": "string", "gen_ai.provider.name": "string", "gen_ai.request.model": "string", "gen_ai.response.model": "string",
   ...Object.fromEntries(TOKEN_USAGE.map((k) => [`gen_ai.usage.${k}`, "int"])),
-  "routr.turn": "int", "routr.turn.outcome": "string", "routr.turn.messages": "int",
+  "routr.turn": "int", "routr.turn.outcome": "string", "routr.turn.messages": "int", "routr.conversation.missing": "string",
   "routr.usage.state": "string", "routr.usage.source": "string",
   ...Object.fromEntries(Object.values(COMMANDS).filter((c) => c.trace?.state).map((c) => [`routr.${c.name}.state`, "string"])), // the command table's
   "routr.verdict": "string", "routr.check": "string", "routr.level": "string", "routr.attempts": "int", "routr.seconds": "double", "routr.causes": "string[]", "routr.subscription": "string", "routr.effort": "string", "routr.effort_from": "string", "routr.advice.id": "string", "error.type": "string" });

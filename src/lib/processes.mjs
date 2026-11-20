@@ -239,17 +239,17 @@ export const startInTerminal = (argv, { cwd, extraEnv = {}, terminal }) => Bun.s
 // The command line that runs routr again; null from a source checkout it cannot locate.
 export const selfCommand = (args) => (!standalone() && !ROUTR_ENTRY ? null : [process.execPath, ...(standalone() ? [] : [ROUTR_ENTRY]), ...args]);
 
-// Run a harness command read-only, in harnessEnv, and collect stdout; resolve null on any failure or timeout, never
+// Run a harness command read-only, in harnessEnv (of `env`, the environment a worker's harness runs with, when given), and collect stdout; resolve null on any failure or timeout, never
 // throw.
 // `status: true` resolves the exit code instead, for a command whose only answer is on stderr. `exitZero: true` resolves
 // null for a command that printed and then exited non-zero: what it printed is not taken as its answer.
 // `account`: as start takes it.
-export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = false, exitZero = false, account } = {}) {
+export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, env, status = false, exitZero = false, account } = {}) {
   return new Promise((resolve) => {
     let out = "", done = false, exited = false;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); if (!exited) stop(child); resolve(v); };
     let child;
-    try { child = start(cmd, args, { stdio: ["pipe", "pipe", "ignore"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }, { account }); } catch { return resolve(null); }
+    try { child = start(cmd, args, { stdio: ["pipe", "pipe", "ignore"], env: harnessEnv(env), ...(cwd ? { cwd } : {}) }, { account }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.on("exit", () => { exited = true; });

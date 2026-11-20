@@ -275,7 +275,10 @@ test("pane launches apply the registry defaults and dry runs show them", async (
           expect(dry.start.argv.includes(arg)).toBe(has);
         }
       }
-      expect(dry.start.argv).toEqual(r.start.argv);
+      // Claude Code starts under a fresh session id each launch, which a dry run shows only as a placeholder.
+      const given = r.start.argv[r.start.argv.indexOf("--session-id") + 1];
+      if (kind === "claude") expect(given).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(dry.start.argv).toEqual(r.start.argv.map((a) => (kind === "claude" && a === given ? "<session id>" : a)));
       // Fake panes do not run Cursor's exit trap.
       if (kind === "cursor") rmSync(r.start.env.CURSOR_CONFIG_DIR, { recursive: true, force: true });
     }

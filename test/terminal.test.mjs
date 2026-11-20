@@ -94,8 +94,11 @@ test("Kiro's headless start stays its ACP mode, with no engine flag and no chat,
   expect(ADAPTERS.kiro.argv({ model: "chat" })).toEqual(["acp", "--trust-tools=*", "--model", "chat"]);
 });
 
+const V4 = "8d997247-4335-4a7b-8a2e-d883ab27799f";
+// What a runner records as it starts the harness, including the id it gave it (as runWorker writes run.json).
+const ranWith = (patch) => ({ run: () => { writeFileSync(join(runDir("w1"), "run.json"), JSON.stringify({ pid: 1, started_at: new Date().toISOString(), harness_pid: 2, ...patch })); return undefined; } });
 test("in the app a worker gets a tab of its own, running routr's runner, with its task in an owner-only file and in no argv or output", async () => {
-  const f = fixture(), r = await f.go();
+  const f = fixture("claude", { hc: fakeHc({ over: ranWith({ session: V4 }) }) }), r = await f.go();
   expect([r.ok, r.state, r.pane]).toEqual([true, "prompted", null]);
   expect(r.headline).toBe("routr: w1 (claude) took its task in terminal t9");
   const run = f.hc.calls.find((c) => c.args[0] === "run").args, tab = run[run.indexOf("--label") + 3];
@@ -109,9 +112,12 @@ test("in the app a worker gets a tab of its own, running routr's runner, with it
   expect(run).not.toContain("--rm"); // what it finished with stays to read until cleanup
   expect(f.hc.calls.find((c) => c.cmd === "herdr-app").args).toEqual(["do", "tab.rename", "--id", tab.slice("herdr.tab=".length), "--name", "w1"]);
   // What launch answers, and its record.
-  expect(r.worker).toEqual({ name: "w1", backend: "terminal", run: runDir("w1"), terminal: "t9" });
+  // Its session: the id its runner gave Claude Code as it started it, kept on its record.
+  expect(r.worker).toEqual({ name: "w1", backend: "terminal", run: runDir("w1"), terminal: "t9", session: V4 });
   const w = JSON.parse(readFileSync(join(runDir("w1"), "worker.json"), "utf8"));
-  expect([w.backend, w.terminal, w.terminal_name, w.kind, w.model]).toEqual(["terminal", "t9", "w1", "claude", "m"]);
+  expect([w.backend, w.terminal, w.terminal_name, w.kind, w.model, w.session]).toEqual(["terminal", "t9", "w1", "claude", "m", V4]);
+  // The id is the runner's to give: launch shows where it goes.
+  expect(r.start.argv.slice(-3, -1)).toEqual(["--session-id", "<session id>"]);
   // The prompt: whole, wrapped, owner-only, and nowhere else.
   const file = join(runDir("w1"), "prompt.md"), prompt = readFileSync(file, "utf8");
   expect(prompt).toStartWith("You are a routr worker.");
@@ -362,10 +368,15 @@ test("a harness starts where the terminal is, on its stdio, with a caller and a 
   expect(r.start.env).toMatchObject({ TRACEPARENT: "<forwarded>", CODEX_HOME: "<forwarded>", CURSOR_CONFIG_DIR: "<forwarded>" });
   expect(JSON.stringify(r)).not.toContain("/lead/codex");
   const started = [], child = new EventEmitter(); child.pid = 77;
-  const running = runWorker("w1", { env: CORE, begin: (...a) => { started.push(a); return child; }, on: () => {}, say: () => {} });
+  // Its chat is asked of Cursor first, in the folder and environment it is about to run in.
+  const asked = [], ask = async (cmd, args, o) => { asked.push([cmd, args, o.cwd, o.env.CURSOR_CONFIG_DIR, o.env.PATH]); return `${V4}\n`; };
+  const running = runWorker("w1", { env: CORE, ask, begin: (...a) => { started.push(a); return child; }, on: () => {}, say: () => {} });
+  await new Promise((ok) => setTimeout(ok, 0));
+  expect(asked).toEqual([["cursor-agent", ["create-chat"], r.cwd, join(runDir("w1"), "cursor-config"), "/core/bin"]]);
+  expect(runRecord("w1").value.session).toBe(V4);
   const [exe, argv, opts] = started[0];
   expect(exe).toBe("cursor-agent");
-  expect(argv).toEqual(["--yolo", "--trust", "--model", "m", firstMessage(join(runDir("w1"), "prompt.md"))]);
+  expect(argv).toEqual(["--yolo", "--trust", "--model", "m", "--resume", V4, firstMessage(join(runDir("w1"), "prompt.md"))]);
   expect(JSON.stringify(argv)).not.toContain("only the worker");
   expect([opts.stdio, opts.cwd, opts.visible]).toEqual(["inherit", r.cwd, true]);
   expect(opts.env.CURSOR_CONFIG_DIR).toBe(join(runDir("w1"), "cursor-config"));
@@ -384,7 +395,11 @@ test("a harness starts where the terminal is, on its stdio, with a caller and a 
 test("the runner stays until the harness has gone, passes on hc kill's signals, starts once, and only for a terminal worker", async () => {
   await fixture("claude").go();
   const child = new EventEmitter(), kills = [], handlers = {}, said = []; child.pid = 7; child.kill = (s) => kills.push(s);
-  const running = runWorker("w1", { env: {}, begin: () => child, on: (s, fn) => { handlers[s] = fn; }, say: (s) => said.push(s) });
+  const started = [], running = runWorker("w1", { env: {}, begin: (...a) => { started.push(a); return child; }, on: (s, fn) => { handlers[s] = fn; }, say: (s) => said.push(s) });
+  await new Promise((ok) => setTimeout(ok, 0));
+  // Claude Code starts under the id its runner gave it, recorded before it started.
+  const given = runRecord("w1").value.session;
+  expect(started[0][1].slice(-3, -1)).toEqual(["--session-id", given]);
   handlers.SIGHUP(); handlers.SIGTERM(); handlers.SIGINT();
   expect(kills).toEqual(["SIGHUP", "SIGTERM"]);
   expect(await runWorker("w1", { env: {}, begin: () => { throw new Error("a second start"); }, on: () => {}, say: (s) => said.push(s) })).toBe(2);
@@ -427,6 +442,7 @@ test("a harness that cannot start is said in fixed words, recorded for launch, a
   await fixture("claude").go();
   const child = new EventEmitter(), said = [];
   const running = runWorker("w1", { env: {}, begin: () => child, on: () => {}, say: (s) => said.push(s) });
+  await new Promise((ok) => setTimeout(ok, 0));
   child.emit("error", Object.assign(new Error("spawn claude ENOENT at /secret/path"), { code: "ENOENT" }));
   expect(await running).toBe(127);
   expect(said).toEqual(["routr: Claude Code did not start (ENOENT)"]);
@@ -592,7 +608,7 @@ test("workers asks hc where a terminal worker's terminal is: a finished or gone 
 test("workers and watch keep their terminal behavior while wait follows hc turns through the worker module", async () => {
   await launched();
   const shown = await workersCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }] }).run });
-  expect([shown.ok, shown.workers]).toEqual([true, [{ name: "w1", kind: "claude", model: "m", effort: null, cwd: expect.any(String), backend: "terminal", terminal: "t9", state: "in_terminal", status: "working" }]]);
+  expect([shown.ok, shown.workers]).toEqual([true, [{ name: "w1", kind: "claude", model: "m", effort: null, cwd: expect.any(String), backend: "terminal", terminal: "t9", state: "in_terminal", status: "working", session: null, session_missing: "not_assigned" }]]);
   expect(noted(shown)).toContain("routr wait --name w1");
   expect(shown.headline).toBe("routr: w1 in_terminal");
   expect((await workerSet({ hc: fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }] }).run }).one("w1").look()).view.state).toBe("in_terminal");

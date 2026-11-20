@@ -100,7 +100,8 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     out.next = launchNext(out.next, { record: recordOptions, cleanup: outcome.cleanup, adopted: outcome.adopted, launchId,
       attempted: outcome.attempted, planned, submitted: outcome.submitted, failed: out.state === "failed" });
   };
-  const done = () => ({ out, backend, finish, adopted: outcome.adopted, advised, subscription });
+  let assigned = null;
+  const done = () => ({ out, backend, finish, adopted: outcome.adopted, advised, subscription, assigned });
   try {
     const o = parseLaunchArgs(args, (name) => accountOf(name, configOf(settings())));
     out.warnings.push(...(o.leadWarnings ?? []));
@@ -112,7 +113,12 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     // A harness that names its folder in its command (Antigravity's --add-dir) is planned for the worktree: a
     // placeholder until herdr has made it, then planned again for its path (issue #22: it was given the main checkout,
     // where a worker launched into its own worktree would have written).
-    const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir, subagentModel: o["subagent-model"], subagentEffort: o["subagent-effort"] });
+    // A pane harness that takes its session id from routr (Claude Code's --session-id) starts under a fresh one, which its
+    // `invoke_agent` span names (worker-session.mjs). A terminal worker's runner gives it its own, as it starts.
+    // A dry run shows where it goes.
+    if (backend === "pane" && HARNESSES[o.kind]?.session?.assign === "uuid" && !o.dryRun) assigned = randomUUID();
+    const shownSession = assigned ?? (backend === "pane" && HARNESSES[o.kind]?.session?.assign === "uuid" ? "<session id>" : undefined);
+    const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir, subagentModel: o["subagent-model"], subagentEffort: o["subagent-effort"], session: shownSession });
     const p = planFor(o.worktree ? "<worktree-path>" : out.cwd);
     Object.assign(out, { start: { executable: p.executable, argv: p.argv, env: { ...p.env, ...accountShownEnv(o.account?.env) } }, warnings: [...out.warnings, ...p.warnings.filter((w) => !w.startsWith("Plan only:"))] });
     if (!o.model) out.next.push(doNext("Choose --model before launching"));
@@ -197,10 +203,10 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
   const settings = oneReading(opts.settings), made = openLaunchId() ?? newLaunchId();
-  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised, subscription } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
+  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised, subscription, assigned } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
     // Whether it counts toward the user's launch share, and so gets its launch_id and history record (launch-identity.mjs).
     const took = countsTowardShare({ state: r.state, backend });
-    try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend, adopted }); } catch {}
+    try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend, adopted, assigned, sleep: opts.sleep, now: opts.now }); } catch {}
     // Its history record: the decision as checked fields, never the task. An adopted pane's agent kept its own model and
     // effort, which launch cannot know. The project is the repository the worker's folder is in (its worktree's).
     r.launch_id = null;

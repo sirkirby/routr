@@ -5,7 +5,9 @@
 // hc runs routr's own runner in the terminal, never the harness: core gives a terminal its server's environment, not
 // its caller's (measured 2026-11-03), so the runner is what gives the harness the environment launch decided on.
 import { warning } from "./warnings.mjs";
-import { delivered, handingOver, launchCarriers, currentLaunch, inputNeeded } from "./traces.mjs";
+import { delivered, handingOver, launchCarriers, currentLaunch, inputNeeded, SESSION_WAIT_MS, tracing } from "./traces.mjs";
+import { assignSession, sessionSource, workerSession } from "./worker-session.mjs";
+import { sessionId } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import { existsSync, writeFileSync } from "node:fs";
@@ -122,9 +124,29 @@ const WITHHELD = "withheld: the worker has its task from the start, so its termi
 // Fills `out`, launch's answer, in place; its failures end here. Answers what launch needs to say next.
 export async function launchTerminal(o, out, ctx) {
   const seen = { opened: false };
-  try { await startTerminal(o, out, ctx, seen); }
+  try { await startTerminal(o, out, ctx, seen); if (out.state === "prompted") await learnSession(out, ctx); }
   catch (e) { launchFailed(out, e, seen.opened); }
   return { attempted: seen.opened, submitted: seen.opened, adopted: false, cleanup: out.worker ? ["routr", "cleanup", "--worker", o.name] : null };
+}
+// The worker's own conversation (worker-session.mjs), as its runner assigned it or its harness's record holds it, kept
+// on its record and its answer's `worker`. A traced launch waits for one its harness has not written yet: its span is
+// to carry it. Never fails the launch.
+async function learnSession(out, { sleep = pausing, now = () => Date.now() }) {
+  try {
+    const dir = out.worker.run, w = readRecordAt(dir);
+    if (!w) return;
+    const got = await sessionNow(w, dir, { wait: tracing() ? SESSION_WAIT_MS : 0, sleep, now });
+    out.worker.session = got.session ?? null;
+    if (got.missing) out.worker.session_missing = got.missing;
+    if (got.session) recordStore().write(dir, amend(w, { session: got.session }));
+  } catch {}
+}
+// A worker's id as it stands: kept on its record once found, else what its runner assigned, else its harness's record
+// of its first message, in a session started after its runner was. `wait`: as workerSession takes it.
+export async function sessionNow(w, dir, { wait = 0, sleep, now } = {}) {
+  if (sessionId(w.session)) return { session: w.session };
+  const ran = runRecord(w.name, dir).value;
+  return workerSession(w, { assigned: ran, message: firstMessage(join(dir, PROMPT_FILE)), since: Date.parse(ran?.started_at), wait, sleep, now });
 }
 async function startTerminal(o, out, { prompt, env, settings, ready, checkListed, hc = client, self, sleep = pausing, now = () => Date.now() }, seen) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
@@ -151,7 +173,9 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   try {
     const launchTrace = currentLaunch(config, env);
     out.warnings.push(...launchCarrierWarnings(found));
-    shown = terminalPlan(planOf({ kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, subagent_model: o["subagent-model"], subagent_effort: o["subagent-effort"] }, dir), firstMessage(file));
+    // An id its runner assigns as the harness starts (worker-session.mjs) shows as a placeholder.
+    shown = terminalPlan({ ...planOf({ kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, subagent_model: o["subagent-model"], subagent_effort: o["subagent-effort"] }, dir),
+      session: sessionSource(o.kind)?.assign ? "<session id>" : undefined }, firstMessage(file));
     out.start = { executable: h.executable, argv: shown.argv, env: { ...subagentDefaults(defaults).env, ...Object.fromEntries([...Object.keys(found.carriers), ...Object.keys(locations)].map((k) => [k, FORWARDED])), ...accountShownEnv(o.account?.env) } };
     out.ran.push(displayCommand([h.executable, ...shown.argv]));
     out.prompt_chars = text.length;
@@ -220,7 +244,7 @@ export const runRecord = (name, dir = runDir(name)) => readJsonFile(join(dir, RU
 // HOME is the core's, so this process cannot find that folder from a name. Reads the record, builds the environment, starts the harness on this terminal, waits, records its exit, exits with its
 // code. Says only fixed lines of its own, on stderr: the screen is the person's. `begin` starts the process (the
 // processes module's start); a test passes a fake.
-export async function runWorker(dir, id, { env = process.env, begin = start, say = (s) => process.stderr.write(`${s}\n`), on = (sig, fn) => process.on(sig, fn), now = () => new Date().toISOString() } = {}) {
+export async function runWorker(dir, id, { env = process.env, begin = start, ask, say = (s) => process.stderr.write(`${s}\n`), on = (sig, fn) => process.on(sig, fn), now = () => new Date().toISOString() } = {}) {
   const w = readRecordAt(dir);
   if (w?.backend !== "terminal" || w.id !== id) { say(`routr: ${dir} does not hold the terminal worker launch started; nothing was started`); return 2; }
   let account; try { account = workerAccount(w)?.env; } catch (e) { say(`routr: ${e.message}; nothing was started`); return 2; }
@@ -232,7 +256,12 @@ export async function runWorker(dir, id, { env = process.env, begin = start, say
   const notStarted = (code) => { record({ ended_at: now(), not_started: code }); say(`routr: ${HARNESSES[w.kind]?.label ?? w.kind} did not start (${code})`); return 127; };
   let child;
   try {
-    const p = terminalPlan(planOf(w, dir), firstMessage(join(dir, PROMPT_FILE)));
+    const planned = planOf(w, dir), first = firstMessage(join(dir, PROMPT_FILE)), adapter = terminalPlan(planned, first).env;
+    // The id it starts under, where routr gives it one: asked for in the environment and folder it runs in, and recorded
+    // before it starts, for launch, workers and send to name (worker-session.mjs). Without one it still starts.
+    const given = await assignSession(w.kind, { cwd: w.cwd, env: terminalEnv({ carriers: w.carriers, config: w.config, adapter, account }, env), ask });
+    if (given) { Object.assign(began, given.session ? { session: given.session } : { missing: given.missing }); record({}); }
+    const p = terminalPlan({ ...planned, session: given?.session }, first);
     // The terminal is the harness's: on Windows a hidden start would take its console from it.
     // Its extra account, as launch saved it: its folder, whatever the caller's or the core's is.
     child = begin(p.executable, p.argv, { stdio: "inherit", cwd: w.cwd, env: terminalEnv({ carriers: w.carriers, config: w.config, adapter: p.env, account }, env), visible: true });
@@ -325,14 +354,16 @@ export const terminal = {
       const next = seen.state === "unknown" ? actionLook(w, "wait") : seen.state === "gone" ? [cleanupStep(w, "gone")]
         : seen.state === "finished" ? [readStep(w), cleanupStep(w, "finished")]
         : asking ? [readStep(w), answerStep, runNext("Once it is answered, wait again.", ["routr", "wait", "--name", w.name])] : [readStep(w)];
+      const known = await sessionNow(w, me.dir);
       return { view: { name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state, gen: 0, turn,
-        seconds_since_event: null, last_tool: null, tasks: 0, queued: 0, session: null, report: null,
+        seconds_since_event: null, last_tool: null, tasks: 0, queued: 0, session: known.session ?? null, ...(known.missing ? { session_missing: known.missing } : {}), report: null,
         ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : asking ? { why: asking } : {}),
         turns: Array.from({ length: turn }, (_, i) => ({ turn: i + 1, outcome: "finished", report: null, delivered: 0 })) },
       next };
     }
+    const known = await sessionNow(w, me.dir);
     const view = { name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state: seen.state,
-      ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : {}) };
+      ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : {}), session: known.session ?? null, ...(known.missing ? { session_missing: known.missing } : {}) };
     const next = seen.state === "in_terminal" ? followSteps(w)
       : seen.state === "unknown" ? [seen.next]
       : [cleanupStep(w, seen.state)];
@@ -363,7 +394,8 @@ export const terminal = {
     // Bookkeeping for wait: a write that fails never turns a delivered message into a failed send.
     if (reply.code === "handed_to_harness" && reply.turn != null) try { writeJsonAtomic(join(me.dir, SEND_FILE), { turn: reply.turn }, { mkdir: false, mode: 0o600 }); } catch {}
     const sent = sentAs(w.name, w.kind, reply);
-    if (sent.ok) delivered(w);
+    // The id it took the message under, looked up again: one its harness wrote after launch looked is found now.
+    if (sent.ok) delivered(w, await sessionNow(w, me.dir).catch(() => null));
     if (reply.code === "refused") sent.next.push(readStep(w), doNext("Read the question and answer it only when it is yours to answer.", templateCommand(["hc", "keys", checked.target, "<keys>"])));
     return sent;
   },

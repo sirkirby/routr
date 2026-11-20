@@ -59,6 +59,11 @@
 //     without it its commands run outside hc (core's manual). Kiro's V3 start: above its entry.
 //   promptFlag: the flag before a first message given as an argument, where it is not a plain
 //     positional (Antigravity's `-i`; measured 2026-11-03 for all five).
+//   session: how routr knows a pane or terminal worker's own conversation (worker-session.mjs). `assign`: routr gives it
+//     its session id before it starts, and `flag` names that id to it: a fresh UUID for Claude Code (`--session-id`), the
+//     one Cursor's own `create-chat` answers (`--resume`). `find`: the harness's own record of the worker's first message,
+//     which names that worker's run folder and no other, holds its id (Codex's rollout, Antigravity's conversation transcript). None:
+//     no id routr can prove (Kiro). Measured 2026-11-20, references/harnesses.md.
 //   noStatus: it reports no status to herdr-core (Cursor 2026.10.22, measured), so only its own `hc send` says it finished.
 //   folder: where it keeps its sign-in, for a harness that takes another folder for it, and so more than one account:
 //     `variable`, the documented variable that names the folder (Claude Code's CLAUDE_CONFIG_DIR, Codex's CODEX_HOME:
@@ -161,7 +166,7 @@ export function claudeBilling(out) {
 
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", app: "claude-code", installAs: "Claude Code", shortLabel: "Claude", skills: ".claude/skills", otelProvider: "anthropic",
-    folder: { variable: "CLAUDE_CONFIG_DIR", default: ".claude", unnamed: true, firstRun: true },
+    folder: { variable: "CLAUDE_CONFIG_DIR", default: ".claude", unnamed: true, firstRun: true }, session: { assign: "uuid", flag: "--session-id" },
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; both explicit spawn settings beat a differing pair.
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
@@ -189,7 +194,7 @@ export const HARNESSES = {
       // Its /usage, or its statusline after a prompt, showed no windows: routr does not guess which plan that is.
       unexplainedNoWindows: true } },
   codex: { label: "Codex", executable: "codex", app: "codex", installAs: "Codex", shortLabel: "Codex", otelProvider: "openai", core: { interactive: ["--no-daemon"] },
-    folder: { variable: "CODEX_HOME", default: ".codex" },
+    folder: { variable: "CODEX_HOME", default: ".codex" }, session: { find: "codex" },
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
     // `--dangerously-bypass-hook-trust`: a hook the user has not trusted in Codex (new, or changed since) opens "Hooks need
@@ -220,7 +225,7 @@ export const HARNESSES = {
     usage: { source: "app-server", read: readCodexLive, windows: ["primary", "secondary", "monthly_cap", "spend_limit"],
       byHand: (n = "codex") => `open Codex and read /status, then pass --headroom ${n}=<share left>` } },
   cursor: { label: "Cursor", executable: "cursor-agent", app: "cursor", installAs: "Cursor (cursor-agent)", shortLabel: "Cursor", noStatus: true, otelProvider: "cursor",
-    permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
+    permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models", session: { assign: "create-chat", flag: "--resume" },
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
     // Seen 2026-09-25: it rewrote cli-config.json (its default model) and added a project folder for the working directory.
     privateConfig: { file: ".cursor/cli-config.json", variable: "CURSOR_CONFIG_DIR" },
@@ -247,7 +252,7 @@ export const HARNESSES = {
   // Skills: measured 2026-10-05 on agy 1.2.17: asked to list its skills, it named one placed in ~/.gemini/config/skills
   // and none of those in ~/.gemini/antigravity-cli/skills (the folder its web docs name) or ~/.agents/skills (it reads
   // only a workspace's .agents/skills). Its bundled guide and its binary name ~/.gemini/config/skills too.
-  agy: { label: "Antigravity", executable: "agy", app: "antigravity", installAs: "Antigravity (agy)", shortLabel: "Antigravity", skills: ".gemini/config/skills", promptFlag: "-i", otelProvider: "gcp.gen_ai",
+  agy: { label: "Antigravity", executable: "agy", app: "antigravity", installAs: "Antigravity (agy)", shortLabel: "Antigravity", skills: ".gemini/config/skills", promptFlag: "-i", otelProvider: "gcp.gen_ai", session: { find: "agy" },
     // Measured 2026-11-03 in a core terminal: it reports blocked at this question.
     startup: "Antigravity asks whether to trust a folder it has not been told to trust, and waits at that question.",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
@@ -416,7 +421,8 @@ export function subagentDefaults({ kind, subagentModel, subagentEffort }) {
 }
 // `interactive: false`: the flags for a headless start, which has words of its own in place of `interactive`. `core`: as it
 // starts in a herdr-core terminal. `cursorConfigDir`: the private folder of a harness with a `privateConfig` (configEnv).
-export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir, subagentModel, subagentEffort, interactive = true, core = false }) {
+// `session`: the id an `assign` harness starts its conversation under (worker-session.mjs); ignored by any other.
+export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir, subagentModel, subagentEffort, interactive = true, core = false, session }) {
   const h = Object.hasOwn(HARNESSES, kind) && HARNESSES[kind];
   if (!h) throw kindError();
   const subagents = subagentDefaults({ kind, subagentModel, subagentEffort });
@@ -426,7 +432,7 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
   if (effort === h.autoEffort) effort = undefined;
   const start = core ? { ...h, ...h.core } : h;
   const argv = [...(interactive ? start.interactive ?? [] : []), ...start.permissions, ...(interactive && start.trust && cwd ? start.trust(cwd) : []), ...(h.dirFlag ? [h.dirFlag, cwd] : []), ...(model ? [h.model, model] : []),
-    ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : []), ...subagents.argv];
+    ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : []), ...(session && h.session?.flag ? [h.session.flag, session] : []), ...subagents.argv];
   return {
     executable: h.executable, argv, env: { ...configEnv(kind, cursorConfigDir), ...subagents.env },
     warnings: [...(!model ? [warning("model_required", "Plan only: choose --model before launching.")] : []), ...(h.notes?.(model, effort) ?? []), ...subagents.warnings],

@@ -50,6 +50,9 @@ const FIELDS = {
   // A plain name: it is typed into a pane's shell (herdr.mjs's SHELLS) without quoting.
   privateConfig: [false, strict({ file: plain(str), variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)) }, ["file", "variable"])],
   // The same: an extra account's variable is typed into a pane's shell by its set or unset line.
+  // How routr knows a pane or terminal worker's own session (worker-session.mjs): given it at start, by the harness's flag, or found.
+  session: [false, (v) => (obj(v) && (v.assign ? ["uuid", "create-chat"].includes(v.assign) && typeof v.flag === "string" && v.find === undefined : ["codex", "agy"].includes(v.find) && v.flag === undefined)
+    && Object.keys(v).every((k) => ["assign", "flag", "find"].includes(k)) ? [] : [""])],
   folder: [false, strict({ variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)), default: plain(str), unnamed: plain(bool), firstRun: plain(bool) }, ["variable", "default"])],
 };
 // What one entry gets wrong, as `field` or `field.nested` paths; [] when it is whole. A field read only when another is
