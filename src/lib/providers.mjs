@@ -125,22 +125,20 @@ export const PROVIDERS = {
         : type === "choice" ? { type, name, instructions, choices: Object.entries(criteria).map(([value, description]) => ({ value, description })) }
           : { type: "predicate", name, instructions: criteria ? `${instructions}\n${Object.entries(criteria).map(([value, description]) => `${value}: ${description}`).join("\n")}` : instructions }) }),
     // Named answers and spreads become System One's objects; readAnswers checks them against the request. A name or a
-    // spread value given twice is unreadable: keeping either would hide the other, unchecked.
+    // spread value given twice is unreadable: keeping either would hide the other, unchecked. A refused question stays
+    // `{ type: "refusal" }`, and readAnswers declines only once every other answer is valid.
     unwrap: (j) => {
       const answers = openaiAnswers(j);
-      if (!answers || answers.some((a) => a.type === "refusal")) return null;
+      if (!answers) return null;
       const spreads = answers.map((a) => a.probabilities).filter((p) => p !== undefined);
-      if (spreads.some((p) => !Array.isArray(p) || !p.every(isObject) || new Set(p.map((x) => String(x.value))).size !== p.length)) return null;
-      return { ...j, answers: Object.fromEntries(answers.map((a) => [a.name, a.type === "predicate"
-        ? { type: "noul", noul: a.probability }
-        : { ...a, probabilities: a.probabilities && Object.fromEntries(a.probabilities.map((x) => [x.value, x.probability])) }])) };
+      if (spreads.some((p) => !Array.isArray(p) || !p.every((x) => isObject(x) && ["string", "number", "boolean"].includes(typeof x.value))
+        || new Set(p.map((x) => String(x.value))).size !== p.length)) return null;
+      return { ...j, answers: Object.fromEntries(answers.map((a) => [a.name, a.type === "refusal" ? { type: "refusal" }
+        : a.type === "predicate" ? { type: "noul", noul: a.probability }
+          : { ...a, probabilities: a.probabilities && Object.fromEntries(a.probabilities.map((x) => [x.value, x.probability])) }])) };
     },
-    // A successful reply may refuse some questions and answer the rest (HTTP 200). It counts as declined only when it
-    // is otherwise readable and every refused name is one routr asked; anything else is an unreadable reply.
-    refused: (j, questions) => {
-      const answers = openaiAnswers(j);
-      return Boolean(answers?.some((a) => a.type === "refusal") && answers.every((a) => Object.hasOwn(questions, a.name)));
-    },
+    // A successful reply (HTTP 200) may refuse some questions and answer the rest.
+    refusals: true,
     identity: (model) => isModel("openai", model),
     // OpenAI's `confidence` is TypeSafe's definition: within 0.015 of it on all 258 levels and 225 choices of the
     // 2026-11-20 gate, so it is kept as sent.

@@ -296,6 +296,12 @@ test("OpenAI's Decisions API is asked in its own shape and its answers read as S
   expect(await code(answering([null, { type: "refusal", name: "t" }]))).toBe("invalid_response");
   expect(await code(answering([t, b, level, kind, { type: "refusal", name: "unasked" }]))).toBe("invalid_response");
   expect(await code(answering([{ type: "refusal", name: "t" }, b, level, kind]))).toBe("declined");
+  // A refusal declines only once the rest of the reply is valid: beside an answer out of range, of an unknown type, with
+  // a repeated spread value, or a spread value no string can stand for, it is unreadable.
+  for (const bad of [{ ...level, score: 500 }, { ...level, type: "rating" },
+    { ...level, probabilities: [...level.probabilities, { value: 2, label: "2", probability: 0 }] },
+    { ...level, probabilities: [{ value: { toString: 0, valueOf: 0 }, probability: 1 }] }])
+    expect(await code(answering([{ type: "refusal", name: "t" }, b, bad, kind]))).toBe("invalid_response");
   // A refusal-shaped HTTP error is still an HTTP error: retried on 429, then reported with its status.
   let now = 0, calls = 0;
   const limited = { ...answering([{ type: "refusal", name: "t" }], 429), fetchFn: async () => { calls++; return Response.json({ answers: [{ type: "refusal", name: "t" }] }, { status: 429 }); },
