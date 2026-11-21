@@ -466,7 +466,9 @@ test("each decision-model finding stays fixed", async () => {
 });
 
 test("doctor names the decision model, its provider, and the fix that provider needs", async () => {
-  const { nextSteps, render } = await import("../src/lib/doctor.mjs");
+  const { nextSteps, render: painted } = await import("../src/lib/doctor.mjs");
+  // Doctor colours its marks when stdout is a terminal (bun test run by hand); the words are what is checked.
+  const render = (x) => painted(x).replace(/\x1b\[[0-9;]*m/g, "");
   const r = (key) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", skill: true }, skill: [], harnesses: {}, decision: [key],
     config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] }, auto_update: { on: false, why_off: "running from source" }, next_steps: [] });
   expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-1.14.0", model: "jev-1.14.0", works: true, ms: 271, measured: true }))).toContain("ok decision model TypeSafe: jev-1.14.0 answers (271 ms)");
