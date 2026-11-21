@@ -71,7 +71,7 @@ process.stdin.on("end", () => { ended = true; if (!busy && !tasks) leave(); });
 // turn/started, items, agentMessage phases, turn/completed; turn/steer joins the running turn and is refused once it has
 // ended; closing its input ends it. It writes each request's method and settings, never its text, to FAKE_RPC, and a
 // client's answer to a request of its own to FAKE_ANSWERS. Words in the text: HOLD, FAIL, CRASH, MCP as above; ASK sends
-// a question request first; the model "nosuch" is refused.
+// a question request first; CHILD sends another thread's turn/completed mid-turn; the model "nosuch" is refused.
 const FAKE_CODEX = `
 const fs = require("node:fs");
 const a = process.argv.slice(2);
@@ -108,6 +108,7 @@ async function run(id, text) {
   if (held === id) (async () => { while (!gate()) await sleep(50); out(reply); held = null; })(); else out(reply);
   out({ method: "turn/started", params: { threadId: thread, turn: { id: turn, items: [], status: "inProgress" } } });
   out({ method: "item/started", params: { threadId: thread, turnId: turn, startedAtMs: 0, item: { type: text.includes("MCP") ? "mcpToolCall" : "commandExecution", id: "c", command: "an argument" } } });
+  if (text.includes("CHILD")) out({ method: "turn/completed", params: { threadId: "child", turn: { id: "child-turn", status: "completed" } } });
   if (text.includes("ASK")) out({ id: 900, method: "item/tool/requestUserInput", params: { threadId: thread, turnId: turn, questions: [] } });
   if (text.includes("HOLD")) for (let i = 0; i < 400 && !nextSteer && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
   out({ method: "item/completed", params: { threadId: thread, turnId: turn, completedAtMs: 0, item: { type: "agentMessage", id: "m1", phase: "commentary", text: "COMMENTARY-not-the-report" } } });
@@ -496,7 +497,7 @@ const noBriefInFiles = (w) => {
 const rpcs = (w) => { try { return readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)); } catch { return []; } };
 
 test("a headless Codex worker: its app-server, a message steered into the running turn, wait, a follow-up that resumes its thread", async () => {
-  const w = world(), file = w.task(`${BRIEF} HOLD`);
+  const w = world(), file = w.task(`${BRIEF} HOLD CHILD`);
   const l = w.launch("c1", file, ["--effort", "low"], undefined, "codex");
   expect([l.ok, l.state, l.headline]).toEqual([true, "prompted", "routr: c1 (codex) took its task, running headless"]);
   expect(l.worker).toEqual({ name: "c1", backend: "headless", run: w.runDir("c1"), session: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b" });
@@ -1230,7 +1231,7 @@ test.skipIf(!POSIX)("a process left in Claude's group after it exits keeps the w
   expect(w.run(["cleanup", "--worker", "g1"])).toMatchObject({ ok: true, state: "removed" });
 }, 60000);
 
-test("Codex's app-server as routr reads it: replies, its own requests, turns, fixed item names, the final answer as the report", () => {
+test("Codex's app-server as routr reads it: replies, its own requests, turns, fixed item names, the final answer as the report, another thread's as activity", () => {
   const read = codexReader(), n = (method, params) => read(JSON.stringify({ jsonrpc: "2.0", method, params }));
   expect(read(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { turnId: "t" } }))).toEqual({ reply: { id: 3, result: { turnId: "t" }, error: null } });
   expect(read(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "item/commandExecution/requestApproval", params: {} }))).toEqual({ request: 7 });
@@ -1248,6 +1249,17 @@ test("Codex's app-server as routr reads it: replies, its own requests, turns, fi
   n("item/completed", { item: { type: "agentMessage", phase: "partial_answer", text: "so far" } });
   expect(n("turn/completed", { turn: { id: "u", status: "interrupted" } })).toEqual({ result: { failed: true, text: null }, id: "u" });
   expect([read("not json"), n("thread/tokenUsage/updated", {})]).toEqual([null, null]);
+  // Given no thread, it reads a thread-scoped turn as it reads one without.
+  expect(n("turn/started", { threadId: "t", turn: { id: "s" } })).toEqual({ turn: true, id: "s" });
+  // Another thread is activity; its requests are still declined and a notification without a thread is read as before.
+  const own = codexReader(() => "parent"), o = (method, params) => own(JSON.stringify({ jsonrpc: "2.0", method, params }));
+  const message = (threadId, text) => o("item/completed", { threadId, item: { type: "agentMessage", phase: "final_answer", text } });
+  message("parent", "parent answer");
+  expect(o("turn/started", { threadId: "child", turn: { id: "c" } })).toEqual({ activity: true });
+  message("child", "child answer");
+  expect(o("turn/completed", { threadId: "child", turn: { id: "c", status: "completed" } })).toEqual({ activity: true });
+  expect(own(JSON.stringify({ id: 7, method: "item/tool/requestUserInput", params: { threadId: "child" } }))).toEqual({ request: 7 });
+  expect(o("turn/completed", { turn: { id: "p", status: "completed" } })).toEqual({ result: { failed: false, text: "parent answer" }, id: "p" });
 });
 
 test("Claude's stream as routr reads it: the session, turns, fixed tool names, background tasks, the turn's end", () => {

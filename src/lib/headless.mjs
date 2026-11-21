@@ -158,14 +158,16 @@ const READY_MS = 30000;
 // its own, or a notification read as what routr knows how to say. The turn's report is its final answer
 // (agentMessage phase final_answer), else its last agentMessage that marks no phase (a model that marks none).
 // Commentary and partial answers are never a report: a turn interrupted after them has none.
-export function codexReader() {
+// Another thread's notifications (a subagent the worker started) are activity only, never the turn or its report.
+export function codexReader(thread = () => null) {
   let final = null, last = null;
   return (line) => {
     let e; try { e = JSON.parse(line); } catch { return null; }
     if (!e || typeof e !== "object") return null;
     const rp = rpcLine(e);
     if (rp) return rp;
-    const p = e.params ?? {};
+    const p = e.params ?? {}, own = thread();
+    if (own && p.threadId && p.threadId !== own) return { activity: true };
     if (e.method === "turn/started") { final = last = null; return { turn: true, id: typeof p.turn?.id === "string" ? p.turn.id : null }; }
     if (e.method === "item/started" && typeof p.item?.type === "string") {
       const t = p.item.type;
@@ -248,7 +250,7 @@ export const ADAPTERS = {
         const v = turnCarriers(), trace = { ...(v.TRACEPARENT ? { traceparent: v.TRACEPARENT } : {}), ...(v.TRACESTATE ? { tracestate: v.TRACESTATE } : {}) };
         return Object.keys(trace).length ? { trace } : {};
       });
-      const read = codexReader();
+      const read = codexReader(() => thread);
       const opts = { cwd, model, approvalPolicy: "never", sandbox: "danger-full-access" };
       // The running turn, as the app-server says it (turn/started, turn/completed) and as turn/start answered it, never
       // one it has said has ended.
