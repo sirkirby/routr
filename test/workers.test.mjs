@@ -29,7 +29,8 @@ import { cfg, cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, scratch, SCRIPT } fr
 // macOS's long tmpdir would be refused (path_too_long, tested below). So these homes sit in /tmp there, removed after.
 const homes = [];
 const shortHome = () => { const h = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "rw-")); homes.push(h); return h; };
-afterAll(() => { for (const h of homes) rmSync(h, { recursive: true, force: true }); });
+// Removing every home took over bun's 5 s hook limit on Windows CI (#194's first run), so the hook gets a minute.
+afterAll(() => { for (const h of homes) rmSync(h, { recursive: true, force: true }); }, 60000);
 const POSIX = process.platform !== "win32";
 // What the check saw when it held, not a second look: a state file being replaced can read empty for a moment on Windows,
 // and asking again then failed a test whose condition had held (seen in CI on e123e50).
