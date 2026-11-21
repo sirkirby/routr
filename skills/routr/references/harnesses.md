@@ -429,6 +429,9 @@ its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schem
 - `initialize`, then `thread/start` with the folder, the model, `approvalPolicy: "never"` and `sandbox:
   "danger-full-access"` (what `--yolo` is in a pane), then `turn/start` with the task as its input and the effort.
   Nothing of the task is in the command line.
+- A subagent the worker starts is a thread of its own on the same connection; its `turn/started`, items and
+  `turn/completed` carry its own `threadId` (seen live 2026-11-16; the app-server schema, codex-cli 0.171.0,
+  requires threadId on each).
 - `turn/steer` with the running turn's id joins that turn: the message arrives as a user message in it. Once the
   turn has ended it is refused (-32600 "no active turn to steer"); a `turn/start` then runs the message as the next
   turn in the same process.

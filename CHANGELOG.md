@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- A headless Codex worker that starts a subagent no longer has its turn ended, or its report taken, by that subagent. (#195)
+
 ## v0.18.0 — 2026-11-20
 
 [Full notes](docs/releases/v0.18.0.md)
